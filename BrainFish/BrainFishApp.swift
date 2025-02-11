@@ -1,6 +1,24 @@
+/*
+ __________               .__       ___________.__       .__
+ \______   \____________  |__| ____ \_   _____/|__| _____|  |__
+  |    |  _/\_  __ \__  \ |  |/    \ |    __)  |  |/  ___/  |  \
+  |    |   \ |  | \// __ \|  |   |  \|     \   |  |\___ \|   Y  \
+  |______  / |__|  (____  /__|___|  /\___  /   |__/____  >___|  /
+         \/             \/        \/     \/            \/     \/
+
+ BrainFish - A macOS Floating Fish Reminder App
+ Developed by Aric Fedida
+ Version 1.0 | Date: February 10th 2025
+
+ "Let your reminders swim by, so you never forget your goals."
+ (Thank you https://patorjk.com/software/taag/#p=display&f=Graffiti&t=BrainFish for the beautiful logo!)
+*/
+
 import SwiftUI
 import Combine
 import AppKit
+import Foundation
+import UniformTypeIdentifiers
 
 // MARK: - Helper Functions
 func randomForLoop(_ loopIndex: Int, seed: Double) -> Double {
@@ -15,26 +33,29 @@ func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double {
 // MARK: - StatusBarController
 class StatusBarController {
     private var statusItem: NSStatusItem
-    private var popover: NSPopover
+    //private var popover: NSPopover
 
-    init(popover: NSPopover) {
-        self.popover = popover
+    init() {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "tortoise.fill", accessibilityDescription: "Worms")
-            button.action = #selector(togglePopover(_:))
-            button.target = self
+            button.image = NSImage(systemSymbolName: "fish.fill", accessibilityDescription: "BrainFish")
         }
+        
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Show Task List", action: #selector(AppDelegate.showTaskListAction), keyEquivalent: "")
+        menu.addItem(withTitle: "Settings", action: #selector(AppDelegate.showSettingsAction), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        
+        statusItem.menu = menu
     }
 
-    @objc func togglePopover(_ sender: Any?) {
-        if let button = statusItem.button {
-            if popover.isShown {
-                popover.performClose(sender)
-            } else {
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            }
-        }
+    @objc func showTaskListAction() {
+        NotificationCenter.default.post(name: Notification.Name("ShowTaskList"), object: nil)
+    }
+
+    @objc func showSettingsAction() {
+        NotificationCenter.default.post(name: Notification.Name("ShowSettings"), object: nil)
     }
 }
 
@@ -53,26 +74,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.ignoresMouseEvents = true
             window.collectionBehavior = [.canJoinAllSpaces, .stationary]
         }
-
-        // Create a new main menu with only your custom commands.
-        let mainMenu = NSMenu(title: "Main Menu")
-
-        let wormsMenuItem = NSMenuItem(title: "Worms", action: nil, keyEquivalent: "")
-        let wormsSubMenu = NSMenu(title: "Worms")
-        wormsSubMenu.addItem(withTitle: "Show Task List", action: #selector(showTaskListAction), keyEquivalent: "")
-        wormsSubMenu.addItem(withTitle: "Settings", action: #selector(showSettingsAction), keyEquivalent: "")
-        wormsSubMenu.addItem(NSMenuItem.separator())
-        wormsSubMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
-        wormsMenuItem.submenu = wormsSubMenu
-
-        mainMenu.addItem(wormsMenuItem)
-        NSApplication.shared.mainMenu = mainMenu
-        
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentSize = NSSize(width: 200, height: 150)
-        popover.contentViewController = NSHostingController(rootView: StatusMenuView())
-        statusBarController = StatusBarController(popover: popover)
+        statusBarController = StatusBarController()
     }
     
     @objc func showTaskListAction() {
@@ -84,25 +86,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - StatusMenuView
-struct StatusMenuView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button("Show Task List") {
-                NSApp.sendAction(#selector(AppDelegate.showTaskListAction), to: nil, from: nil)
-            }
-            Button("Settings") {
-                NSApp.sendAction(#selector(AppDelegate.showSettingsAction), to: nil, from: nil)
-            }
-            Divider()
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
-        }
-        .padding()
-        .frame(width: 180)
-    }
-}
 
 // MARK: - Task Model
 final class Task: Identifiable, ObservableObject {
@@ -462,86 +445,76 @@ struct TaskSnakeView: View {
     }
 }
 
-// MARK: - TaskDropDelegate
-struct TaskDropDelegate: DropDelegate {
-    let item: Task
-    let currentIndex: Int
-    @Binding var tasks: [Task]
-    @Binding var currentDraggingTask: Task?
+
+
+// MARK: - TaskListHeaderView
+struct TaskListHeaderView: View {
+    @Environment(\.presentationMode) var presentationMode
     
-    func dropEntered(info: DropInfo) {
-        guard let current = currentDraggingTask, current.id != item.id,
-              let from = tasks.firstIndex(where: { $0.id == current.id }) else { return }
-        if from != currentIndex {
-            withAnimation {
-                tasks.move(fromOffsets: IndexSet(integer: from), toOffset: currentIndex > from ? currentIndex + 1 : currentIndex)
+    var body: some View {
+        HStack {
+            Text("Task List")
+                .font(.headline)
+            Spacer()
+            Button("Close") {
+                presentationMode.wrappedValue.dismiss()
             }
         }
-    }
-    
-    func performDrop(info: DropInfo) -> Bool {
-        currentDraggingTask = nil
-        return true
+        .padding(.bottom, 5)
     }
 }
+
+
+// MARK: - TaskListInputView
+struct TaskListInputView: View {
+    @Binding var newTaskTitle: String
+    let onSubmit: () -> Void
+    
+    var body: some View {
+        HStack {
+            TextField("New Task", text: $newTaskTitle)
+                .submitLabel(.done)
+                .onSubmit(onSubmit)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+            Button("Add", action: onSubmit)
+        }
+    }
+}
+
 
 // MARK: - TaskListView
 struct TaskListView: View {
     @EnvironmentObject var appData: AppData
     @EnvironmentObject var appSettings: AppSettings
-    @Environment(\.presentationMode) var presentationMode
     @State private var newTaskTitle: String = ""
-    @State private var draggingTask: Task? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Top bar with title and Close button
-            HStack {
-                Text("Task List")
-                    .font(.headline)
-                Spacer()
-                Button("Close") {
-                    presentationMode.wrappedValue.dismiss()
-                }
-            }
-            .padding(.bottom, 5)
+            TaskListHeaderView()
             
-            // List with drag-and-drop reordering
-            List {
-                ForEach(appData.tasks.indices, id: \.self) { index in
-                    TaskRowView(task: appData.tasks[index],
-                                index: index,
-                                tasks: $appData.tasks,
-                                draggingTask: $draggingTask)
-                }
-                .onDelete(perform: deleteTask)
-                .onMove(perform: moveTask)
-            }
-            .listStyle(PlainListStyle())
+            TaskListContentView()
             
-            HStack {
-                TextField("New Task", text: $newTaskTitle)
-                    .submitLabel(.done)
-                    .onSubmit(addTask)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                Button("Add", action: addTask)
-            }
+            TaskListInputView(newTaskTitle: $newTaskTitle, onSubmit: addTask)
         }
         .padding()
         .frame(minWidth: 300, minHeight: 400)
-        .onAppear {
-            if let window = NSApplication.shared.windows.first {
-                 window.ignoresMouseEvents = false
-            }
-        }
-        .onDisappear {
-            if let window = NSApplication.shared.windows.first {
-                 window.ignoresMouseEvents = true
-            }
+        .onAppear(perform: setupWindow)
+        .onDisappear(perform: resetWindow)
+    }
+    
+    private func setupWindow() {
+        if let window = NSApp.keyWindow {
+            window.ignoresMouseEvents = false
         }
     }
     
-    func addTask() {
+    private func resetWindow() {
+        if let window = NSApp.keyWindow {
+            window.ignoresMouseEvents = true
+        }
+    }
+    
+    private func addTask() {
         guard !newTaskTitle.isEmpty else { return }
         let newTask = Task(
             title: newTaskTitle,
@@ -554,60 +527,71 @@ struct TaskListView: View {
         }
         newTaskTitle = ""
     }
-    
-    func deleteTask(at offsets: IndexSet) {
-        appData.tasks.remove(atOffsets: offsets)
-    }
-    
-    func moveTask(from source: IndexSet, to destination: Int) {
-        appData.tasks.move(fromOffsets: source, toOffset: destination)
-    }
 }
+
 
 // MARK: - TaskRowView
 struct TaskRowView: View {
     @ObservedObject var task: Task
-    let index: Int
-    @Binding var tasks: [Task]
-    @Binding var draggingTask: Task?
+    @EnvironmentObject var appData: AppData
     @EnvironmentObject var appSettings: AppSettings
+    @State private var isEditing = false
+    @FocusState private var isFocused: Bool
     
     var body: some View {
-        HStack {
-            // Drag handle icon.
+        HStack(spacing: 8) {
             Image(systemName: "line.horizontal.3")
                 .foregroundColor(.secondary)
-            TextField("Task", text: Binding(
-                get: { task.title },
-                set: { task.title = $0 }
-            ))
-            .textFieldStyle(RoundedBorderTextFieldStyle())
+                .frame(width: 20)
+            
+            Group {
+                if isEditing {
+                    TextField("Task", text: $task.title)
+                        .focused($isFocused)
+                        .textFieldStyle(PlainTextFieldStyle())
+                        .onSubmit {
+                            isEditing = false
+                        }
+                        .onAppear {
+                            isFocused = true
+                        }
+                } else {
+                    Text(task.title)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isEditing = true
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            
             if appSettings.pomodoroMode {
                 Button(action: {
                     task.remainingTime = appSettings.defaultPomodoroTime
                 }) {
                     Text("🍅")
                 }
+                .buttonStyle(.plain)
+                
                 Text(timeString(from: task.remainingTime))
                     .font(.system(size: 12, weight: .bold))
+                    .frame(width: 60, alignment: .trailing)
             }
-            // Delete button.
+            
             Button(action: {
-                if let idx = tasks.firstIndex(where: { $0.id == task.id }) {
-                    _ = withAnimation {
-                        tasks.remove(at: idx)
+                withAnimation {
+                    if let idx = appData.tasks.firstIndex(where: { $0.id == task.id }) {
+                        appData.tasks.remove(at: idx)
                     }
                 }
             }) {
                 Image(systemName: "trash")
             }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
-        .onDrag {
-            self.draggingTask = task
-            return NSItemProvider(object: task.id.uuidString as NSString)
-        }
-        .onDrop(of: ["public.text"], delegate: TaskDropDelegate(item: task, currentIndex: index, tasks: $tasks, currentDraggingTask: $draggingTask))
+        .background(Color.clear)
     }
     
     func timeString(from seconds: TimeInterval) -> String {
@@ -616,6 +600,90 @@ struct TaskRowView: View {
         return String(format: "%02d:%02d", minutes, secs)
     }
 }
+
+
+// Make UUID conform to Transferable
+extension UUID: @retroactive Transferable {
+    public static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .plainText)
+    }
+}
+
+struct TaskListContentView: View {
+    @EnvironmentObject var appData: AppData
+    @State private var draggedTaskId: UUID?
+    
+    var body: some View {
+        List {
+            ForEach(appData.tasks) { task in
+                TaskRowContent(task: task, draggedTaskId: $draggedTaskId)
+            }
+        }
+        .listStyle(PlainListStyle())
+    }
+}
+
+// Separated component for task row content
+struct TaskRowContent: View {
+    let task: Task
+    @Binding var draggedTaskId: UUID?
+    @EnvironmentObject var appData: AppData
+    
+    var body: some View {
+        TaskRowView(task: task)
+            .id(task.id)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+            .listRowBackground(backgroundFor(taskId: task.id))
+            .draggable(task.id) {
+                DragPreviewView(title: task.title)
+            }
+            .dropDestination(for: UUID.self) { items, _ in
+                handleDrop(of: items, onto: task.id)
+            } isTargeted: { isTargeted in
+                if isTargeted {
+                    draggedTaskId = task.id
+                }
+            }
+    }
+    
+    private func backgroundFor(taskId: UUID) -> Color {
+        draggedTaskId == taskId ? Color.accentColor.opacity(0.1) : Color.clear
+    }
+    
+    private func handleDrop(of items: [UUID], onto targetId: UUID) -> Bool {
+        guard let droppedId = items.first,
+              let fromIndex = appData.tasks.firstIndex(where: { $0.id == droppedId }),
+              let toIndex = appData.tasks.firstIndex(where: { $0.id == targetId }) else {
+            return false
+        }
+        
+        if fromIndex != toIndex {
+            withAnimation {
+                let task = appData.tasks.remove(at: fromIndex)
+                appData.tasks.insert(task, at: toIndex)
+            }
+        }
+        draggedTaskId = nil
+        return true
+    }
+}
+
+// Drag preview component
+struct DragPreviewView: View {
+    let title: String
+    
+    var body: some View {
+        HStack {
+            Image(systemName: "line.horizontal.3")
+            Text(title)
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(8)
+    }
+}
+
 
 // MARK: - SettingsView
 struct SettingsView: View {
