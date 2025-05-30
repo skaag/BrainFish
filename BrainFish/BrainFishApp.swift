@@ -3,8 +3,8 @@
  \______   \____________  |__| ____ \_   _____/|__| _____|  |__
   |    |  _/\_  __ \__  \ |  |/    \ |    __)  |  |/  ___/  |  \
   |    |   \ |  | \// __ \|  |   |  \|     \   |  |\___ \|   Y  \
-  |______  / |__|  (____  /__|___|  /\___  /   |__/____  >___|  /
-         \/             \/        \/     \/            \/     \/
+  |    |   / |__|  (____  /__|___|  /\___  /   |__/____  >___|  /
+  |______  /             \/        \/     \/            \/     \/
 
  BrainFish - A macOS Floating Fish Reminder App
  Developed by Aric Fedida
@@ -20,6 +20,38 @@ import AppKit
 import Foundation
 import UniformTypeIdentifiers
 
+// --- Global Mouse Tracker ---
+class GlobalMouseTracker: ObservableObject {
+    private var timer: Timer?
+    @Published var globalMousePosition: NSPoint = .zero
+    var pollingInterval: TimeInterval = 1.0 / 30.0
+
+    func start() {
+        stop()
+        timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if let event = CGEvent(source: nil) {
+                let loc = event.location
+                let screenHeight = NSScreen.main?.frame.height ?? 0
+                self.globalMousePosition = NSPoint(x: loc.x, y: screenHeight - loc.y)
+            }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
+
+// Make UUID conform to Transferable
+extension UUID: Transferable {
+    public static var transferRepresentation: some TransferRepresentation {
+        ProxyRepresentation(exporting: \.uuidString)
+    }
+}
+
 // MARK: - Helper Functions
 func randomForLoop(_ loopIndex: Int, seed: Double) -> Double {
     let x = sin(Double(loopIndex) * 12.9898 + seed) * 43758.5453
@@ -28,6 +60,13 @@ func randomForLoop(_ loopIndex: Int, seed: Double) -> Double {
 
 func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double {
     return a + (b - a) * t
+}
+
+func timeString(from seconds: TimeInterval) -> String {
+    guard seconds >= 0 else { return "00:00" }
+    let minutes = Int(seconds) / 60
+    let secs = Int(seconds) % 60
+    return String(format: "%02d:%02d", minutes, secs)
 }
 
 // MARK: - StatusBarController
@@ -63,6 +102,7 @@ class StatusBarController {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBarController: StatusBarController?
     var popover: NSPopover!
+    var window: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let window = NSApplication.shared.windows.first, let screen = NSScreen.main {
@@ -73,8 +113,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.backgroundColor = .clear
             window.ignoresMouseEvents = true
             window.collectionBehavior = [.canJoinAllSpaces, .stationary]
+            self.window = window
         }
         statusBarController = StatusBarController()
+        setupScreenChangeObserver()
     }
     
     @objc func showTaskListAction() {
@@ -83,6 +125,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc func showSettingsAction() {
         NotificationCenter.default.post(name: Notification.Name("ShowSettings"), object: nil)
+    }
+
+    private func updateWindowFrame(for window: NSWindow) {
+        if let screen = NSScreen.main {
+            let screenFrame = screen.frame
+            window.setFrame(screenFrame, display: true)
+        }
+    }
+
+    @objc func handleScreenChange() {
+        guard let screen = NSScreen.main else { return }
+        let screenBounds = screen.visibleFrame
+
+        // Calculate safe zone (80% of visible screen)
+        let safeZone = CGRect(
+            x: screenBounds.minX + screenBounds.width * 0.1,
+            y: screenBounds.minY + screenBounds.height * 0.1,
+            width: screenBounds.width * 0.8,
+            height: screenBounds.height * 0.8
+        )
+
+        // Reset fish positions within safe zone
+        NotificationCenter.default.post(
+            name: Notification.Name("ResetFishPositions"),
+            object: nil,
+            userInfo: ["safeZone": safeZone]
+        )
+        updateWindowFrame(for: window!)
+    }
+
+    private func setupScreenChangeObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
     }
 }
 
@@ -94,6 +173,7 @@ final class Task: Identifiable, ObservableObject {
     var startOffset: Double
     var speed: CGFloat
     @Published var remainingTime: TimeInterval
+    @Published var accelerationEndTime: Date? = nil // Added for sustained speed
     
     init(title: String, startOffset: Double, speed: CGFloat, remainingTime: TimeInterval = 7200) {
         self.title = title
@@ -108,7 +188,7 @@ extension Task: Codable {
         case title, startOffset, speed, remainingTime
     }
     
-    public func encode(to encoder: Encoder) throws {
+    func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(title, forKey: .title)
         try container.encode(startOffset, forKey: .startOffset)
@@ -142,6 +222,9 @@ class AppData: ObservableObject {
 
     init() {
         loadTasks()  // Attempt to load saved tasks
+        #if DEBUG
+        print("DEBUG: AppData initialized with \(tasks.count) tasks: \(tasks.map { $0.title })")
+        #endif
         startTimer()
         // Save tasks whenever the tasks array changes.
         $tasks
@@ -215,6 +298,7 @@ struct OutlineText: ViewModifier {
 
 // MARK: - AppSettings
 class AppSettings: ObservableObject {
+    @Published var useGlobalMouseTracking: Bool = true
     @Published var fontColor: Color = .red  // (For Color you might need a custom solution, but we'll leave it as-is for now.)
     
     @Published var fontSize: CGFloat = 20 {
@@ -234,9 +318,15 @@ class AppSettings: ObservableObject {
             UserDefaults.standard.set(defaultPomodoroTime, forKey: "defaultPomodoroTime")
         }
     }
+    // --- Sleep Cycle Settings ---
+    @Published var sleepIntervalMinutes: Int = 5 {
+        didSet { UserDefaults.standard.set(sleepIntervalMinutes, forKey: "sleepIntervalMinutes") }
+    }
+    @Published var sleepDurationMinutes: Int = 5 {
+        didSet { UserDefaults.standard.set(sleepDurationMinutes, forKey: "sleepDurationMinutes") }
+    }
     
     init() {
-        // Load saved settings if available.
         if let savedFontSize = UserDefaults.standard.object(forKey: "fontSize") as? CGFloat {
             fontSize = savedFontSize
         }
@@ -245,6 +335,13 @@ class AppSettings: ObservableObject {
         }
         if let savedDefaultTime = UserDefaults.standard.object(forKey: "defaultPomodoroTime") as? TimeInterval {
             defaultPomodoroTime = savedDefaultTime
+        }
+        // --- Load Sleep Cycle Settings ---
+        if let interval = UserDefaults.standard.object(forKey: "sleepIntervalMinutes") as? Int {
+            sleepIntervalMinutes = interval
+        }
+        if let duration = UserDefaults.standard.object(forKey: "sleepDurationMinutes") as? Int {
+            sleepDurationMinutes = duration
         }
         // (If you want to persist fontColor, you could convert it to/from a hex string or Data.)
     }
@@ -256,36 +353,153 @@ struct ContentView: View {
     @EnvironmentObject var appData: AppData
     @EnvironmentObject var appSettings: AppSettings
     
+    @State private var isSleeping: Bool = false
+    @State private var lastSleepToggleTime: Date = Date()
+    @State private var sleepTimer: Timer? = nil
+    @State private var mousePosition: NSPoint = .zero
+    // --- Global Mouse Tracking ---
+    @StateObject private var globalMouseTracker = GlobalMouseTracker()
+
     var body: some View {
         GeometryReader { geometry in
-            TimelineView(.animation) { timeline in
+            #if DEBUG
+            let _ = print("ContentView Geometry: local=\(geometry.frame(in: .local)), global=\(geometry.frame(in: .global))")
+            #endif
+            
+            // --- Place TimelineView directly --- 
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
                 let currentTime = timeline.date.timeIntervalSinceReferenceDate
+                let geometry = geometry // Ensure geometry is captured if it's not already in scope for the ZStack replacement
+                // Inner ZStack for fish
                 ZStack {
+                    #if DEBUG
+                    let _ = print("DEBUG: ContentView - isSleeping=\(isSleeping), pomodoroMode=\(appSettings.pomodoroMode), tasksCount=\(appData.tasks.count)")
+                    #endif
+                    
                     if appSettings.pomodoroMode {
+                        #if DEBUG
+                        let _ = print("DEBUG: Pomodoro mode enabled")
+                        #endif
                         if !appData.tasks.isEmpty {
                             let index = appData.currentPomodoroTaskIndex % appData.tasks.count
-                            TaskSnakeView(task: appData.tasks[index],
+                            let task = appData.tasks[index] // Get the task object
+                            #if DEBUG
+                            let _ = print("DEBUG: Creating Pomodoro TaskSnakeView for task \(index): '\(task.title)'")
+                            #endif
+                            TaskSnakeView(task: task, // Use the task object
                                           taskIndex: index,
                                           totalTasks: 1,
                                           time: currentTime,
-                                          size: geometry.size)
+                                          size: geometry.size,
+                                          isSleeping: isSleeping,
+                                          mousePosition: mousePosition,
+                                          useGlobalMouseTracking: appSettings.useGlobalMouseTracking,
+                                          globalMousePosition: globalMouseTracker.globalMousePosition,
+                                          appSettings: appSettings)
+                                .id(task.id) // ADDED EXPLICIT ID
+                        } else {
+                            #if DEBUG
+                            let _ = print("DEBUG: No tasks available for Pomodoro mode")
+                            #endif
                         }
                     } else {
+                        #if DEBUG
+                        let _ = print("DEBUG: Regular mode enabled, creating \(appData.tasks.count) fish")
+                        #endif
                         ForEach(appData.tasks.indices, id: \.self) { index in
                             let task = appData.tasks[index]
+                            #if DEBUG
+                            let _ = print("DEBUG: Creating TaskSnakeView \(index) for task: '\(task.title)'")
+                            #endif
                             TaskSnakeView(task: task,
                                           taskIndex: index,
                                           totalTasks: appData.tasks.count,
                                           time: currentTime,
-                                          size: geometry.size)
+                                          size: geometry.size,
+                                          isSleeping: isSleeping,
+                                          mousePosition: mousePosition,
+                                          useGlobalMouseTracking: appSettings.useGlobalMouseTracking,
+                                          globalMousePosition: globalMouseTracker.globalMousePosition,
+                                          appSettings: appSettings)
+                                .id(task.id)
                         }
                     }
                 }
-                .frame(width: geometry.size.width, height: geometry.size.height)
+            } // End TimelineView
+            // --- Apply TrackingAreaView as background --- 
+            .background(
+                TrackingAreaView(mousePosition: $mousePosition)
+            )
+             
+        } // End GeometryReader
+        .ignoresSafeArea()
+        .onAppear {
+            setupSleepTimer()
+        }
+        .onChange(of: appSettings.sleepIntervalMinutes) { _, _ in 
+            setupSleepTimer()
+        }
+        .onChange(of: appSettings.useGlobalMouseTracking) { _, enabled in
+            if enabled {
+                globalMouseTracker.start()
+            } else {
+                globalMouseTracker.stop()
             }
         }
-        .ignoresSafeArea()
-        .background(Color.clear)
+        .onChange(of: appSettings.sleepDurationMinutes) { _, _ in
+            // No immediate action needed, timer restart covers it
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) {
+            _ in
+            // Invalidate existing timers on screen change
+        }
+        .onChange(of: mousePosition) { oldValue, newValue in // UPDATED for macOS 14+ compatibility
+            #if DEBUG
+            print("DIAGNOSTIC: ContentView.mousePosition changed from \(oldValue) to: \(newValue)")
+            #endif
+        }
+    }
+    
+    func setupSleepTimer() {
+        sleepTimer?.invalidate()
+        // Check every minute
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { _ in
+            checkSleepState()
+        }
+        // Initial check
+        checkSleepState()
+    }
+    
+    func checkSleepState() {
+        let now = Date()
+        // Ensure settings are positive to prevent division by zero or negative intervals
+        let intervalMinutes = max(1, appSettings.sleepIntervalMinutes)
+        let durationMinutes = max(1, appSettings.sleepDurationMinutes)
+        
+        let intervalSeconds = TimeInterval(intervalMinutes * 60)
+        let durationSeconds = TimeInterval(durationMinutes * 60)
+        
+        let timeSinceLastToggle = now.timeIntervalSince(lastSleepToggleTime)
+        
+        if isSleeping {
+            // Currently sleeping, check if duration has passed
+            if timeSinceLastToggle >= durationSeconds {
+                #if DEBUG
+                print("Waking up fish...")
+                #endif
+                isSleeping = false
+                lastSleepToggleTime = now // Mark wake-up time
+            }
+        } else {
+            // Currently awake, check if interval has passed
+            if timeSinceLastToggle >= intervalSeconds {
+                #if DEBUG
+                print("Putting fish to sleep...")
+                #endif
+                isSleeping = true
+                lastSleepToggleTime = now // Mark sleep start time
+            }
+        }
     }
     
     func timeString(from seconds: TimeInterval) -> String {
@@ -295,129 +509,381 @@ struct ContentView: View {
     }
 }
 
-// MARK: - TaskSnakeView
+
+// MARK: - TaskSnakeView (Fixed)
 struct TaskSnakeView: View {
-    @EnvironmentObject var appSettings: AppSettings
-    
     let task: Task
     let taskIndex: Int
     let totalTasks: Int
-    let time: TimeInterval
+    let time: TimeInterval // Current time from ContentView's TimelineView
     let size: CGSize
+    let isSleeping: Bool
+    let mousePosition: NSPoint
+    let useGlobalMouseTracking: Bool
+    let globalMousePosition: NSPoint
+    let appSettings: AppSettings
     
-    // Helper function to vary font scale based on letter index.
-    func letterScale(for i: Int, total: Int) -> CGFloat {
-        guard total > 1 else { return 1.0 }
-        let norm = CGFloat(i) / CGFloat(total - 1)
-        let pectoralNorm: CGFloat = 0.1
-        let ventralNorm: CGFloat = 0.3
-        if norm <= pectoralNorm {
-            // Increase from 1.0 to 1.1 linearly.
-            return 1.0 + 0.1 * (norm / pectoralNorm)
-        } else if norm <= ventralNorm {
-            // Decrease from 1.1 to 0.9 linearly.
-            let factor = (norm - pectoralNorm) / (ventralNorm - pectoralNorm)
-            return 1.1 - 0.2 * factor
-        } else {
-            // Decrease linearly from 0.9 at ventralNorm to 0.8 at tail.
-            let factor = (norm - ventralNorm) / (1 - ventralNorm)
-            return 0.9 - 0.4 * factor
+    @State private var initialTime: TimeInterval? = nil
+    @State private var lastUpdateTime: TimeInterval = 0
+    @State private var currentPosition: CGFloat = 0
+    @State private var speedMultiplier: Double = 2.0
+    @State private var baseSpeedMultiplier: Double = 1.0
+    @State private var targetBaseSpeed: Double = 1.0
+    @State private var lastSpeedChangeTime: TimeInterval = 0
+    @State private var startDelay: Double = 0
+    @State private var hasStarted: Bool = false
+    @State private var lastPrintTime: TimeInterval = 0
+    @State private var isMouseCurrentlyOver: Bool = false // Added for hit-testing
+
+    private let speedChangeInterval: TimeInterval = 5.0
+    private let printInterval: TimeInterval = 2.0
+
+    var body: some View {
+        let elapsedTime = (initialTime != nil) ? (time - initialTime!) : 0
+        Group {
+            if isSleeping || !hasStarted {
+                EmptyView()
+            } else {
+                fishBodyView(
+                    task: task,
+                    taskIndex: taskIndex,
+                    totalTasks: totalTasks,
+                    size: size,
+                    elapsedTime: elapsedTime,
+                    currentPosition: currentPosition,
+                    isMouseCurrentlyOver: self.isMouseCurrentlyOver, // Pass new state
+                    currentSpeedMultiplier: self.speedMultiplier,
+                    currentBaseSpeed: self.baseSpeedMultiplier,
+                    updateLastPrintTime: self.updateLastPrintTime,
+                    lastPrintTime: self.lastPrintTime,
+                    printInterval: self.printInterval,
+                    // mousePosition: mousePosition, // REMOVED
+                    appSettings: appSettings)
+            }
+        }
+        .onChange(of: time) { _, newTime in
+            updatePositionAndSpeed(newTime: newTime)
+        }
+        .onAppear { 
+            #if DEBUG
+            print("DEBUG: TaskSnakeView Group ONAPPEAR - Task: \(taskIndex), Title: \(task.title), ViewSize: \(size), isSleeping: \(isSleeping), initialTime: \(String(describing: initialTime))") 
+            #endif
+            #if DEBUG
+            print("DEBUG: TaskSnakeView ONAPPEAR - Initial currentPosition: \(self.currentPosition), size.width: \(self.size.width)") // DEBUG
+            #endif
+
+            if self.initialTime == nil { 
+                self.initialTime = time
+                self.currentPosition = self.size.width // EXPLICITLY SET POSITION
+                #if DEBUG
+                print("DEBUG: TaskSnakeView ONAPPEAR - Set currentPosition to size.width: \(self.currentPosition)") // DEBUG
+                #endif
+            }
+            if self.startDelay == 0 { 
+                // Calculate the new delay range
+                let maxDelay = max(1.0, Double(totalTasks * 3)) // Ensure maxDelay is at least 1.0
+                self.startDelay = Double.random(in: 1.0...maxDelay) // MODIFIED
+                #if DEBUG
+                print("DEBUG: TaskSnakeView Group ONAPPEAR - Task: \(taskIndex), Set startDelay: \(self.startDelay) (Range: 1.0...\(maxDelay))") // MODIFIED to show new range
+                #endif
+            }
+            updatePositionAndSpeed(newTime: time) // Initial call
         }
     }
     
-    var body: some View {
-        // In Pomodoro mode, combine the task title with the live timer.
+    func updatePositionAndSpeed(newTime: TimeInterval) {
+        // Log the mousePosition as TaskSnakeView sees it at this moment
+        if taskIndex == 0 {
+            #if DEBUG
+            print("DIAGNOSTIC_TSV_UPDATE: Fish(0) updatePositionAndSpeed - mousePos: \(self.mousePosition), currentFishX: \(currentPosition)")
+            #endif
+        }
+        let elapsedTime = (initialTime != nil) ? (newTime - initialTime!) : 0
+        let deltaTime = newTime - lastUpdateTime
+        
+        // Check if we should start swimming (after random delay)
+        if !hasStarted {
+            if elapsedTime >= startDelay {
+                hasStarted = true
+                lastUpdateTime = newTime
+                lastSpeedChangeTime = newTime
+                #if DEBUG
+                print("DEBUG: TaskSnakeView updatePositionAndSpeed - Task: \(taskIndex) HAS STARTED. elapsedTime: \(elapsedTime), startDelay: \(startDelay)")
+                #endif
+            }
+            return
+        }
+        
+        guard lastUpdateTime > 0 else {
+            lastUpdateTime = newTime
+            return
+        }
+        
+        // Handle periodic speed changes every 5 seconds
+        if newTime - lastSpeedChangeTime >= speedChangeInterval {
+            // Generate new random target speed (0.6x to 1.4x)
+            targetBaseSpeed = Double.random(in: 0.6...1.4)
+            lastSpeedChangeTime = newTime
+        }
+        
+        // Smoothly ease towards target base speed
+        let speedEaseRate = 0.5 // How fast to transition between speeds
+        if abs(baseSpeedMultiplier - targetBaseSpeed) > 0.01 {
+            let speedChangeAmount = speedEaseRate * deltaTime
+            if baseSpeedMultiplier < targetBaseSpeed {
+                baseSpeedMultiplier = min(baseSpeedMultiplier + speedChangeAmount, targetBaseSpeed)
+            } else {
+                baseSpeedMultiplier = max(baseSpeedMultiplier - speedChangeAmount, targetBaseSpeed)
+            }
+        }
+        
+        // Calculate fish dimensions for wraparound and avoidance
         let displayText: String = appSettings.pomodoroMode
             ? "\(task.title) (\(timeString(from: task.remainingTime)))"
             : task.title
-        
         let letters = Array(displayText)
         let letterSpacing = appSettings.fontSize * 0.6
         let textWidth = letterSpacing * CGFloat(letters.count)
-        let totalDistance = size.width + textWidth
+
+        // DEBUG PRINT for mouse state BEFORE interaction logic
+        if taskIndex == 0 && Date().timeIntervalSinceReferenceDate - self.lastPrintTime > 0.5 { 
+            #if DEBUG
+            print("DEBUG_MOUSE_STATE Pre: Fish(0) - isMouseOver: \(isMouseCurrentlyOver), mousePos: \(mousePosition), currentFishPos: \(currentPosition), speedMult: \(speedMultiplier), baseSpeedMult: \(baseSpeedMultiplier)")
+            #endif
+            self.lastPrintTime = Date().timeIntervalSinceReferenceDate // Update lastPrintTime for this log
+        }
+
+        // --- Use global mouse position if enabled ---
+        let effectiveMousePosition = appSettings.useGlobalMouseTracking ? self.globalMousePosition : mousePosition
+
+        // Hit-testing logic
+        let fishCenterX = currentPosition + (textWidth / 2.0)
+        let fishCenterY = wormPath(letterX: fishCenterX)
+
+        // Flip mousePosition.y to match SwiftUI coordinate system
+        let flippedMouseY = size.height - effectiveMousePosition.y
+        let adjustedMousePos = CGPoint(x: effectiveMousePosition.x, y: flippedMouseY)
+
+        let hitTestRadiusX = textWidth / 2.0
+        let hitTestRadiusY = appSettings.fontSize
+
+        let dx = adjustedMousePos.x - fishCenterX
+        let dy = adjustedMousePos.y - fishCenterY
+        let normalizedDxSq = pow(dx / hitTestRadiusX, 2)
+        let normalizedDySq = pow(dy / hitTestRadiusY, 2)
+        self.isMouseCurrentlyOver = (normalizedDxSq + normalizedDySq) < 1.0
         
-        let nominalCycleDuration = totalDistance / task.speed
-        let loopIndex = Int(floor((time - delayAdjustment) / nominalCycleDuration))
-        let localT = (time - delayAdjustment).truncatingRemainder(dividingBy: nominalCycleDuration)
+        // Keep a single concise log for fish 0 only
+        if taskIndex == 0 {
+            #if DEBUG
+            print("Fish(0) hit-test: adjustedMousePos=\(adjustedMousePos), fishCenter=(\(String(format: "%.1f", fishCenterX)), \(String(format: "%.1f", fishCenterY))), isMouseCurrentlyOver=\(self.isMouseCurrentlyOver)")
+            #endif
+        }
+
+        // Calculate distance-based speed multiplier (SPEED UP when mouse is near)
+        var targetSpeedMultiplier: Double
+        // 'task' is already available as a property of TaskSnakeView (self.task)
+
+        if self.isMouseCurrentlyOver {
+            task.accelerationEndTime = Date().addingTimeInterval(2.0) // Set/extend acceleration end time
+            targetSpeedMultiplier = 2.5 // Speed up more significantly
+        } else {
+            if let endTime = task.accelerationEndTime, Date() < endTime {
+                targetSpeedMultiplier = 2.5 // Maintain accelerated speed
+            } else {
+                targetSpeedMultiplier = 1.0 // Revert to normal speed
+                if task.accelerationEndTime != nil {
+                    task.accelerationEndTime = nil // Clear end time only if it was previously set
+                }
+            }
+        }
         
-        let randomSpeedFactor = CGFloat(lerp(1, 2, randomForLoop(loopIndex, seed: 1.0)))
-        let randomHorizontalOffset = CGFloat(lerp(-Double(letterSpacing), Double(letterSpacing), randomForLoop(loopIndex, seed: 3.0)))
+        let changeRate = 5.0 // Fast transitions for responsive escape behavior
+
+        if abs(speedMultiplier - targetSpeedMultiplier) > 0.01 {
+            let changeAmount = changeRate * deltaTime
+            if speedMultiplier < targetSpeedMultiplier {
+                speedMultiplier = min(speedMultiplier + changeAmount, targetSpeedMultiplier)
+            } else {
+                speedMultiplier = max(speedMultiplier - changeAmount, targetSpeedMultiplier)
+            }
+        }
         
-        let effectiveSpeed = task.speed * randomSpeedFactor
-        let fraction = localT * effectiveSpeed / totalDistance
+        // Update position incrementally based on current speed
+        let randomSpeedFactor = 0.9 + 0.2 * randomForLoop(taskIndex, seed: 2.0)
+        let baseSpeed = task.speed * randomSpeedFactor * baseSpeedMultiplier // Include natural speed variation
+        let currentSpeed = baseSpeed * speedMultiplier
+        let distanceThisFrame = currentSpeed * deltaTime
         
-        // Right-to-left motion.
-        let headX = size.width + textWidth - (fraction * totalDistance) - randomHorizontalOffset
+        // Always move fish to the left (never backwards)
+        currentPosition -= distanceThisFrame
+        // Wrap fish to right edge if off left side
+        if currentPosition < -textWidth {
+            currentPosition = size.width
+            #if DEBUG
+            print("DEBUG: Fish wrapped to right edge. taskIndex=\(taskIndex), textWidth=\(textWidth), newCurrentPosition=\(currentPosition)")
+            #endif
+        }
         
+        lastUpdateTime = newTime
+        #if DEBUG
+        let _ = print("DEBUG: TaskSnakeView updatePositionAndSpeed END - Task: \(taskIndex), newPos: \(currentPosition), newSpeedMult: \(speedMultiplier), newBaseSpeedMult: \(baseSpeedMultiplier), deltaTime: \(deltaTime)")
+        #endif
+    }
+    
+    // Helper function for wormPath calculation (needed in updatePositionAndSpeed)
+    private func wormPath(letterX: CGFloat) -> CGFloat {
         let topBandHeight = size.height * 0.05
         let baselineY = topBandHeight * (CGFloat(taskIndex) + 0.5) / CGFloat(totalTasks)
+        let wormAmplitude = lerp(5, 10, randomForLoop(taskIndex, seed: 4.0))
+        let wormFrequency = lerp(10, 20, randomForLoop(taskIndex, seed: 5.0))
+        let wormPhase = lerp(0, 2 * Double.pi, randomForLoop(taskIndex, seed: 6.0))
+        let secondaryAmplitude = lerp(1.0, 3.0, randomForLoop(taskIndex, seed: 7.0))
+        let secondaryFrequency = lerp(1.0, 2.0, randomForLoop(taskIndex, seed: 8.0))
+        let secondaryPhase = lerp(0, 2 * Double.pi, randomForLoop(taskIndex, seed: 9.0))
+        let normalizedX = Double(letterX + size.width) / Double(size.width + size.width)
+        let mod1 = wormAmplitude * sin(2 * .pi * wormFrequency * normalizedX + wormPhase)
+        let mod2 = secondaryAmplitude * sin(2 * .pi * secondaryFrequency * normalizedX + secondaryPhase)
+        return baselineY + CGFloat(mod1 + mod2)
+    }
+    
+    func updateLastPrintTime() {
+        lastPrintTime = Date().timeIntervalSinceReferenceDate
+    }
+}
+
+// MARK: - Fish Body View Struct Definition (Updated)
+struct fishBodyView: View {
+    let task: Task
+    let taskIndex: Int
+    let totalTasks: Int
+    let size: CGSize
+    let elapsedTime: TimeInterval
+    let currentPosition: CGFloat
+    let isMouseCurrentlyOver: Bool // Added
+    let currentSpeedMultiplier: Double
+    let currentBaseSpeed: Double
+    let updateLastPrintTime: () -> Void
+    @State var lastPrintTime: TimeInterval // Made @State as it's modified locally for debug
+    let printInterval: TimeInterval
+    // let mousePosition: CGPoint // REMOVED
+    let appSettings: AppSettings
+
+    var body: some View {
+        let displayText: String = appSettings.pomodoroMode
+            ? "\(task.title) (\(timeString(from: task.remainingTime)))"
+            : task.title
+        let letters = Array(displayText)
+        let letterSpacing = appSettings.fontSize * 0.6
+        let textWidth = letterSpacing * CGFloat(letters.count)
+
+        // Helper function to vary font scale based on letter index.
+        func letterScale(for i: Int, total: Int) -> CGFloat {
+            guard total > 1 else { return 1.0 }
+            let norm = CGFloat(i) / CGFloat(total - 1)
+            let pectoralNorm: CGFloat = 0.1
+            let ventralNorm: CGFloat = 0.3
+            if norm <= pectoralNorm {
+                // Increase from 1.0 to 1.1 linearly.
+                return 1.0 + 0.1 * (norm / pectoralNorm)
+            } else if norm <= ventralNorm {
+                // Decrease from 1.1 to 0.9 linearly.
+                let factor = (norm - pectoralNorm) / (ventralNorm - pectoralNorm)
+                return 1.1 - 0.2 * factor
+            } else {
+                // Decrease linearly from 0.9 at ventralNorm to 0.8 at tail.
+                let factor = (norm - ventralNorm) / (1 - ventralNorm)
+                return 0.9 - 0.4 * factor
+            }
+        }
         
-        // Worm path parameters.
-        let wormAmplitude = lerp(5, 10, randomForLoop(loopIndex, seed: 4.0))
-        let wormFrequency = lerp(10, 20, randomForLoop(loopIndex, seed: 5.0))
-        let wormPhase = lerp(0, 2 * Double.pi, randomForLoop(loopIndex, seed: 6.0))
-        let secondaryAmplitude = lerp(1.0, 3.0, randomForLoop(loopIndex, seed: 7.0))
-        let secondaryFrequency = lerp(1.0, 2.0, randomForLoop(loopIndex, seed: 8.0))
-        let secondaryPhase = lerp(0, 2 * Double.pi, randomForLoop(loopIndex, seed: 9.0))
+        // Use currentPosition directly instead of calculating from elapsed time
+        let headX = currentPosition
         
+        // --- Distance calculation for mouse avoidance (elliptical, centered on fish middle) ---
+        // REMOVE local calculation of nearMouse, dx, dy, ellipticalDistance, etc.
+        // These are no longer needed as isMouseCurrentlyOver is passed in.
+        // let fishCenterX = currentPosition + (textWidth / 2.0)
+        // let fishCenterPoint = CGPoint(x: fishCenterX, y: wormPath(letterX: fishCenterX))
+        // let flippedMouseY = size.height - mousePosition.y
+        // let adjustedMousePos = CGPoint(x: mousePosition.x, y: flippedMouseY)
+        // 
+        // let dx = fishCenterPoint.x - adjustedMousePos.x
+        // let dy = fishCenterPoint.y - adjustedMousePos.y
+        // 
+        // let avoidanceRadiusX = fishTotalWidth * 0.75 
+        // let avoidanceRadiusY = max(appSettings.fontSize * 2.0, 60.0) 
+        // 
+        // let normalizedDx = dx / avoidanceRadiusX
+        // let normalizedDy = dy / avoidanceRadiusY
+        // let ellipticalDistance = sqrt(normalizedDx * normalizedDx + normalizedDy * normalizedDy)
+        // let nearMouse = self.isMouseCurrentlyOver // Replaced above
+
+        // --- Debug Prints (throttled) ---
+        let now = Date()
+        if taskIndex == 0 && (lastPrintTime == 0 || now.timeIntervalSinceReferenceDate - lastPrintTime > printInterval) { // MODIFIED: Only for taskIndex == 0
+            #if DEBUG
+            print("Fish \(taskIndex): HeadX=\(String(format: "%.1f", headX)), nearMouse=\(isMouseCurrentlyOver), speedMult=\(String(format: "%.2f", currentSpeedMultiplier)), baseSpeed=\(String(format: "%.2f", currentBaseSpeed))")
+            #endif
+            DispatchQueue.main.async {
+                updateLastPrintTime()
+            }
+        }
+
+        // --- Local Helper Functions ---
         func wormPath(letterX: CGFloat) -> CGFloat {
-            let normalizedX = Double(letterX + textWidth) / Double(totalDistance)
+            let topBandHeight = size.height * 0.05
+            let baselineY = topBandHeight * (CGFloat(taskIndex) + 0.5) / CGFloat(totalTasks)
+            let wormAmplitude = lerp(5, 10, randomForLoop(taskIndex, seed: 4.0))
+            let wormFrequency = lerp(10, 20, randomForLoop(taskIndex, seed: 5.0))
+            let wormPhase = lerp(0, 2 * Double.pi, randomForLoop(taskIndex, seed: 6.0))
+            let secondaryAmplitude = lerp(1.0, 3.0, randomForLoop(taskIndex, seed: 7.0))
+            let secondaryFrequency = lerp(1.0, 2.0, randomForLoop(taskIndex, seed: 8.0))
+            let secondaryPhase = lerp(0, 2 * Double.pi, randomForLoop(taskIndex, seed: 9.0))
+            let normalizedX = Double(letterX + size.width) / Double(size.width + size.width)
             let mod1 = wormAmplitude * sin(2 * .pi * wormFrequency * normalizedX + wormPhase)
             let mod2 = secondaryAmplitude * sin(2 * .pi * secondaryFrequency * normalizedX + secondaryPhase)
             return baselineY + CGFloat(mod1 + mod2)
         }
         
-        // Helper to compute the tangent angle of the worm path at a given x.
+        // Helper function to calculate tangent angle.
         func tangentAngle(at x: CGFloat) -> Angle {
             let dx: CGFloat = 1.0
             let y1 = wormPath(letterX: x)
             let y2 = wormPath(letterX: x + dx)
             let angleRadians = atan2(y2 - y1, dx)
-            // Adjust by 90° because our images originally point downward.
             return Angle(radians: Double(angleRadians))
         }
         
-        // --- Calculate positions and sizes for fish images ---
-        let headImageWidth = appSettings.fontSize * 2.0  // Current head size.
-        let pectoralWidth = appSettings.fontSize * 1.4
-        let ventralWidth = appSettings.fontSize * 1.1
-        let tailImageWidth = appSettings.fontSize * 1.6
-                
-        // Fin positions
-        let pectoralX = headX + 0.15 * textWidth
-        let ventralX = headX + 0.4 * textWidth
-        let tailX = headX + textWidth
-
         return ZStack {
             // Fish head
             Image("koi-head")
                 .resizable()
                 .scaledToFit()
-                .frame(width: headImageWidth, height: headImageWidth)
+                .frame(width: appSettings.fontSize * 2.0, height: appSettings.fontSize * 2.0)
                 .rotationEffect(tangentAngle(at: headX), anchor: .trailing)
-                // Adjust the position so that the right edge (trailing edge) remains fixed:
-                .position(x: headX - headImageWidth/2, y: wormPath(letterX: headX))
+                .position(x: headX - appSettings.fontSize, y: wormPath(letterX: headX))
             // Pectoral fins
             Image("koi-fins-pectoral")
                 .resizable()
                 .scaledToFit()
-                .frame(width: pectoralWidth)
-                .rotationEffect(tangentAngle(at: pectoralX))
-                .position(x: pectoralX, y: wormPath(letterX: pectoralX))
+                .frame(width: appSettings.fontSize * 1.4)
+                .rotationEffect(tangentAngle(at: headX + 0.15 * textWidth))
+                .position(x: headX + 0.15 * textWidth, y: wormPath(letterX: headX + 0.15 * textWidth))
             // Ventral fins
             Image("koi-fins-ventral")
                 .resizable()
                 .scaledToFit()
-                .frame(width: ventralWidth)
-                .rotationEffect(tangentAngle(at: ventralX))
-                .position(x: ventralX, y: wormPath(letterX: ventralX))
+                .frame(width: appSettings.fontSize * 1.1)
+                .rotationEffect(tangentAngle(at: headX + 0.4 * textWidth))
+                .position(x: headX + 0.4 * textWidth, y: wormPath(letterX: headX + 0.4 * textWidth))
             // Tail
             Image("koi-tail")
                 .resizable()
                 .scaledToFit()
-                .frame(width: tailImageWidth, height: tailImageWidth)
-                .rotationEffect(tangentAngle(at: tailX), anchor: .leading)
-                .position(x: tailX + tailImageWidth/2, y: wormPath(letterX: tailX))
+                .frame(width: appSettings.fontSize * 1.6, height: appSettings.fontSize * 1.6)
+                .rotationEffect(tangentAngle(at: headX + textWidth), anchor: .leading)
+                .position(x: headX + textWidth + appSettings.fontSize * 0.8, y: wormPath(letterX: headX + textWidth))
             // The text letters with variable font sizes
             ForEach(letters.indices, id: \.self) { i in
                 let letterX = headX + CGFloat(i) * letterSpacing
@@ -429,25 +895,17 @@ struct TaskSnakeView: View {
                     .foregroundColor(appSettings.fontColor)
                     .position(x: letterX, y: letterY)
                     .rotationEffect(.degrees(0))
-                    .animation(nil, value: time)
+                    .animation(nil, value: elapsedTime)
             }
         }
-    }
-
-    var delayAdjustment: TimeInterval {
-        return 0.5 * Double(taskIndex)
-    }
-    
-    func timeString(from seconds: TimeInterval) -> String {
-        let minutes = Int(seconds) / 60
-        // let secs = Int(seconds) % 60
-        return String(format: "%02d", minutes)
     }
 }
 
 
+    // MARK: - Pomodoro Timer & Controls
 
-// MARK: - TaskListHeaderView
+    // --- Removed duplicate global function definition ---
+
 struct TaskListHeaderView: View {
     @Environment(\.presentationMode) var presentationMode
     
@@ -602,13 +1060,6 @@ struct TaskRowView: View {
 }
 
 
-// Make UUID conform to Transferable
-extension UUID: @retroactive Transferable {
-    public static var transferRepresentation: some TransferRepresentation {
-        CodableRepresentation(contentType: .plainText)
-    }
-}
-
 struct TaskListContentView: View {
     @EnvironmentObject var appData: AppData
     @State private var draggedTaskId: UUID?
@@ -702,7 +1153,7 @@ struct SettingsView: View {
                 }
             }
             .padding(.bottom, 5)
-            
+        
             Form {
                 ColorPicker("Font Color", selection: $appSettings.fontColor)
                 HStack {
@@ -721,6 +1172,18 @@ struct SettingsView: View {
                         .frame(width: 50)
                     }
                 }
+                Toggle("Global Mouse Tracking", isOn: $appSettings.useGlobalMouseTracking)
+                // --- Sleep Cycle Settings ---
+                Stepper("Sleep every \(appSettings.sleepIntervalMinutes) minutes",
+                        value: $appSettings.sleepIntervalMinutes, in: 1...60)
+                    .onChange(of: appSettings.sleepIntervalMinutes) { _, _ in 
+                        if appSettings.sleepIntervalMinutes < 1 { appSettings.sleepIntervalMinutes = 1 }
+                    }
+                Stepper("Sleep for \(appSettings.sleepDurationMinutes) minutes",
+                        value: $appSettings.sleepDurationMinutes, in: 1...60)
+                    .onChange(of: appSettings.sleepDurationMinutes) { _, _ in 
+                        if appSettings.sleepDurationMinutes < 1 { appSettings.sleepDurationMinutes = 1 }
+                    }
             }
         }
         .padding()
@@ -738,46 +1201,237 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Main App Entry Point
-@main
-struct FloatingSnakeApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject var appData = AppData()
-    @StateObject var appSettings = AppSettings()
-    
-    @State private var showTaskList = false
-    @State private var showSettings = false
-    
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(appData)
-                .environmentObject(appSettings)
-                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowTaskList"))) { _ in
-                    showTaskList = true
-                }
-                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowSettings"))) { _ in
-                    showSettings = true
-                }
-                .sheet(isPresented: $showTaskList) {
-                    TaskListView()
-                        .environmentObject(appData)
-                        .environmentObject(appSettings)
-                }
-                .sheet(isPresented: $showSettings) {
-                    SettingsView()
-                        .environmentObject(appSettings)
-                }
-        }
-        .commands {
-            CommandMenu("Worms") {
-                Button("Show Task List") { showTaskList = true }
-                Button("Settings") { showSettings = true }
-                Divider()
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
+// MARK: - Helper Views
+
+struct TrackingAreaView: NSViewRepresentable {
+    @Binding var mousePosition: NSPoint
+
+    func makeNSView(context: Context) -> MouseTrackingNSView { 
+        #if DEBUG
+        print("--- TrackingAreaView: makeNSView CALLED ---")
+        #endif
+        let view = MouseTrackingNSView(mousePosition: $mousePosition)
+        
+        // Still attempt to set acceptsMouseMovedEvents on the window
+        DispatchQueue.main.async { 
+            if let window = view.window {
+                #if DEBUG
+                print("--- TrackingAreaView: Setting acceptsMouseMovedEvents=true on window ---")
+                #endif
+                window.acceptsMouseMovedEvents = true
+            } else {
+                // This might still fail if the view isn't in a window yet
+                #if DEBUG
+                print("--- TrackingAreaView: Could not get window in makeNSView ---")
+                #endif
             }
         }
+        return view
+    }
+
+    // Remove updateNSView - the custom view handles its own updates
+    func updateNSView(_ nsView: MouseTrackingNSView, context: Context) {
+         #if DEBUG
+         print("--- TrackingAreaView: updateNSView CALLED (NO-OP) ---")
+         #endif
+        // No-op, bindings handle updates if needed, view handles tracking area
+    }
+
+    // Remove Coordinator and makeCoordinator
+    // func makeCoordinator() -> Coordinator { ... }
+    // class Coordinator: NSObject { ... }
+}
+
+// MARK: - Custom NSView Subclass for Tracking
+class MouseTrackingNSView: NSView {
+    @Binding var mousePosition: NSPoint
+    var trackingArea: NSTrackingArea?
+    private weak var observedWindow: NSWindow?
+
+    init(mousePosition: Binding<NSPoint>) {
+        _mousePosition = mousePosition
+        super.init(frame: .zero) // Initial frame doesn't matter much here
+        self.wantsLayer = true
+        self.layer?.backgroundColor = NSColor.clear.cgColor // Keep it transparent
+         #if DEBUG
+         print("DIAGNOSTIC: MouseTrackingNSView.init() called.") // ENSURED PRINT
+         #endif
+        // For observing window key status changes
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidChangeKey(_:)), name: NSWindow.didBecomeKeyNotification, object: self.window)
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidChangeKey(_:)), name: NSWindow.didResignKeyNotification, object: self.window)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        #if DEBUG
+        print("DIAGNOSTIC: MouseTrackingNSView.deinit() called.")
+        #endif
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let locationInWindow = event.locationInWindow
+        let convertedPoint = self.convert(locationInWindow, from: nil)
+        #if DEBUG
+        print("DIAGNOSTIC_IMMEDIATE: MouseTrackingNSView.mouseMoved called. Window: \(locationInWindow), Converted: \(convertedPoint)") // Log immediately
+        #endif
+        
+        // Update the binding directly, as mouseMoved is usually on the main thread.
+        self.mousePosition = convertedPoint
+        // Log to confirm the binding was set. This will be synchronous now.
+        #if DEBUG
+        print("DIAGNOSTIC_SYNC_UPDATE: MouseTrackingNSView.mouseMoved - mousePosition binding updated to: \(self.mousePosition)")
+        #endif
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        #if DEBUG
+        print("DIAGNOSTIC: MouseTrackingNSView.updateTrackingAreas() called. Current Bounds: \(self.bounds)") // DIAGNOSTIC PRINT
+        #endif
+
+        if let existingTrackingArea = self.trackingArea {
+            self.removeTrackingArea(existingTrackingArea)
+            self.trackingArea = nil // Clear the reference
+            #if DEBUG
+            print("DIAGNOSTIC: MouseTrackingNSView - Removed existing tracking area.")
+            #endif
+        }
+        
+        // Only add tracking area if bounds are valid (non-empty)
+        if !self.bounds.isEmpty {
+            let options: NSTrackingArea.Options = [
+                .mouseMoved, 
+                .activeInKeyWindow, // Only track when window is key
+                .inVisibleRect
+            ]
+            
+            trackingArea = NSTrackingArea(rect: self.bounds, options: options, owner: self, userInfo: nil)
+            if let ta = trackingArea {
+                self.addTrackingArea(ta)
+                #if DEBUG
+                print("DIAGNOSTIC: MouseTrackingNSView - Added new tracking area for bounds \(self.bounds).")
+                #endif
+            } else {
+                #if DEBUG
+                print("DIAGNOSTIC_ERROR: MouseTrackingNSView - Failed to create NSTrackingArea.")
+                #endif
+            }
+        } else {
+            #if DEBUG
+            print("DIAGNOSTIC: MouseTrackingNSView - Bounds are empty, skipping new tracking area creation.")
+            #endif
+        }
+    }
+
+    // Called when the view is added to a window or its frame changes
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        #if DEBUG
+        print("--- MouseTrackingNSView: setFrameSize called. New size: \(newSize). Bounds: \(self.bounds) ---")
+        #endif
+        self.updateTrackingAreas() // Directly call updateTrackingAreas()
+    }
+
+    // It's good practice for custom views that handle mouse events
+    override var acceptsFirstResponder: Bool { true }
+    
+    // MARK: - Additional NSView Overrides
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        #if DEBUG
+        print("--- MouseTrackingNSView: viewDidMoveToWindow. Window: \(String(describing: self.window)), Bounds: \(self.bounds) ---")
+        #endif
+
+        // Remove observer from old window if any
+        if let oldWindow = observedWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: oldWindow)
+            observedWindow = nil
+        }
+
+        if let newWindow = self.window {
+            NotificationCenter.default.addObserver(self,
+                                               selector: #selector(windowDidChangeKey(_:)),
+                                               name: NSWindow.didBecomeKeyNotification,
+                                               object: newWindow)
+            observedWindow = newWindow
+            #if DEBUG
+            print("--- MouseTrackingNSView: Added didBecomeKeyNotification observer for window: \(newWindow) ---")
+            #endif
+            // Initial setup of tracking area when view is added to a window
+            self.updateTrackingAreas()
+        } else {
+            #if DEBUG
+            print("--- MouseTrackingNSView: viewDidMoveToWindow - No window to observe or setup tracking for. ---")
+            #endif
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        #if DEBUG
+        print("--- MouseTrackingNSView: viewWillMoveToWindow. New Window: \(String(describing: newWindow)) ---")
+        #endif
+        // If the view is being removed from its current window (newWindow is nil)
+        // and it was previously in a window (self.window is not nil yet, or use observedWindow)
+        if newWindow == nil, let currentWindow = self.window ?? observedWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: currentWindow)
+            observedWindow = nil // Clear the observed window reference
+            #if DEBUG
+            print("--- MouseTrackingNSView: Removed didBecomeKeyNotification observer from window: \(currentWindow) as view is being removed. ---")
+            #endif
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        #if DEBUG
+        print("--- MouseTrackingNSView: viewDidChangeEffectiveAppearance. Bounds: \(self.bounds) ---")
+        #endif
+        // self.needsUpdateTrackingAreas = true // Consider if appearance changes affect tracking needs
+    }
+
+    @objc func windowDidChangeKey(_ notification: Notification) {
+        guard let notificationWindow = notification.object as? NSWindow, notificationWindow === self.window else {
+            // print("--- MouseTrackingNSView: windowDidChangeKey notification for other window or no window. Ignored. ---")
+            return
+        }
+        #if DEBUG
+        print("--- MouseTrackingNSView: WindowDidBecomeKey notification received for OUR window. Updating tracking areas. Bounds: \(self.bounds) ---")
+        #endif
+        self.updateTrackingAreas()
+        // Immediately update mouse position when regaining focus
+        let mouseLocationInScreen = NSEvent.mouseLocation
+        if let window = self.window {
+            let mouseLocationInWindow = window.convertPoint(fromScreen: mouseLocationInScreen)
+            let mouseLocationInView = self.convert(mouseLocationInWindow, from: nil)
+            self.mousePosition = mouseLocationInView
+            #if DEBUG
+            print("DIAGNOSTIC: MouseTrackingNSView.windowDidBecomeKey - Updated mousePosition to: \(mouseLocationInView)")
+            #endif
+        }
+    }
+}
+
+// Helper to wrap NSView in SwiftUI
+struct MouseTrackingView: NSViewRepresentable {
+    @Binding var mousePosition: NSPoint
+
+    func makeNSView(context: Context) -> MouseTrackingNSView {
+        let nsView = MouseTrackingNSView(mousePosition: $mousePosition)
+        #if DEBUG
+        print("MouseTrackingView: makeNSView called, NSView created")
+        #endif
+        return nsView
+    }
+
+    func updateNSView(_ nsView: MouseTrackingNSView, context: Context) {
+        #if DEBUG
+        print("DIAGNOSTIC: TrackingAreaView.updateNSView called. mousePosition from binding: \(mousePosition), nsView.mousePosition: \(nsView.mousePosition)")
+        #endif
     }
 }
