@@ -343,6 +343,27 @@ class AppSettings: ObservableObject {
         if let duration = UserDefaults.standard.object(forKey: "sleepDurationMinutes") as? Int {
             sleepDurationMinutes = duration
         }
+        // Load useGlobalMouseTracking setting
+        if let savedUseGlobalMouseTracking = UserDefaults.standard.object(forKey: "useGlobalMouseTracking") as? Bool {
+            useGlobalMouseTracking = savedUseGlobalMouseTracking
+        } else {
+            // If not saved, it defaults to true (as set in property declaration), so ensure UserDefaults reflects this for next time
+             UserDefaults.standard.set(useGlobalMouseTracking, forKey: "useGlobalMouseTracking")
+        }
+        // Note: The 'if let duration...' for sleepDurationMinutes was already present after this block.
+        // Ensure it's correctly placed if it was intended to be part of the same conditional or sequence.
+        // Based on current structure, it seems fine as a separate load.
+        if let duration = UserDefaults.standard.object(forKey: "sleepDurationMinutes") as? Int {
+            sleepDurationMinutes = duration
+        }
+
+        // Activate global mouse tracking if enabled at startup
+        if useGlobalMouseTracking {
+            #if DEBUG
+            print("DEBUG: AppSettings init - Activating Global Mouse Tracking on startup.")
+            #endif
+            NotificationCenter.default.post(name: Notification.Name("StartGlobalMouseTracking"), object: nil)
+        }
         // (If you want to persist fontColor, you could convert it to/from a hex string or Data.)
     }
 }
@@ -1173,6 +1194,16 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("Global Mouse Tracking", isOn: $appSettings.useGlobalMouseTracking)
+                    .onChange(of: appSettings.useGlobalMouseTracking) { _, enabled in
+                        #if DEBUG
+                        print("DEBUG: SettingsView - Global Mouse Tracking toggled: \(enabled)")
+                        #endif
+                        if enabled {
+                            NotificationCenter.default.post(name: Notification.Name("StartGlobalMouseTracking"), object: nil)
+                        } else {
+                            NotificationCenter.default.post(name: Notification.Name("StopGlobalMouseTracking"), object: nil)
+                        }
+                    }
                 // --- Sleep Cycle Settings ---
                 Stepper("Sleep every \(appSettings.sleepIntervalMinutes) minutes",
                         value: $appSettings.sleepIntervalMinutes, in: 1...60)
