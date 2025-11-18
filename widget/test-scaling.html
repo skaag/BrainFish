@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrainFish - Scaling Test</title>
+    <link rel="stylesheet" href="css/brainfish-widget-v2.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 120px 20px 20px;
+            background: #000;
+            color: white;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        button {
+            background: #FF3B30;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #D70015;
+        }
+
+        .size-info {
+            background: rgba(255, 255, 255, 0.9);
+            color: black;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐟 Sprite Scaling & Alignment Test</h1>
+        <p>Test different font sizes to verify sprite scaling and text alignment</p>
+
+        <div class="controls">
+            <h3>Font Size Tests</h3>
+            <button onclick="setFontSize(12)">12px (Small)</button>
+            <button onclick="setFontSize(16)">16px (Default)</button>
+            <button onclick="setFontSize(20)">20px (Large)</button>
+            <button onclick="setFontSize(24)">24px (XL)</button>
+            <button onclick="setFontSize(32)">32px (XXL)</button>
+
+            <div class="size-info" id="sizeInfo">
+                Current Size: 16px
+            </div>
+
+            <h3>Quick Tasks</h3>
+            <button onclick="setTasks(['Test'])">Single Word</button>
+            <button onclick="setTasks(['AB', 'XYZ'])">Short Tasks</button>
+            <button onclick="setTasks(['Code review', 'Meeting prep'])">Medium Tasks</button>
+            <button onclick="setTasks(['Fix bug'])">Reset</button>
+        </div>
+    </div>
+
+    <script src="js/brainfish-widget-v2.js"></script>
+    <script>
+        let currentFontSize = 16;
+        let currentTasks = ['Fix bug'];
+
+        let widget = new BrainFishWidget({
+            tasks: currentTasks,
+            theme: 'red',
+            fontSize: currentFontSize,
+            speed: 80, // Slower for better observation
+            avoidMouse: true
+        });
+
+        function setFontSize(size) {
+            currentFontSize = size;
+            recreateWidget();
+            document.getElementById('sizeInfo').textContent = `Current Size: ${size}px (Sprite Scale: ${(size/16).toFixed(1)}x)`;
+        }
+
+        function setTasks(tasks) {
+            currentTasks = tasks;
+            recreateWidget();
+        }
+
+        function recreateWidget() {
+            if (widget) widget.destroy();
+            widget = new BrainFishWidget({
+                tasks: currentTasks,
+                theme: 'red',
+                fontSize: currentFontSize,
+                speed: 80,
+                avoidMouse: true
+            });
+        }
+    </script>
+</body>
+</html>

@@ -14,6 +14,14 @@ struct FloatingSnakeApp: App {
             ContentView()
                 .environmentObject(appData)
                 .environmentObject(appSettings)
+                .onAppear {
+                    // Check if Reminders sync is enabled and initialize if so
+                    if appSettings.remindersSyncEnabled {
+                        _Concurrency.Task {
+                            _ = await appData.enableRemindersSync()
+                        }
+                    }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShowTaskList"))) { _ in
                     showTaskList = true
                 }
@@ -27,6 +35,7 @@ struct FloatingSnakeApp: App {
                 }
                 .sheet(isPresented: $showSettings) {
                     SettingsView()
+                        .environmentObject(appData)
                         .environmentObject(appSettings)
                 }
         }

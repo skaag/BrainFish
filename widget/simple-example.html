@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrainFish Widget - Simple Example</title>
+    <link rel="stylesheet" href="css/brainfish-widget.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 80px 20px 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+
+        .content {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to My Website</h1>
+
+        <div class="content">
+            <h2>About This Demo</h2>
+            <p>This is a simple example showing how easy it is to add the BrainFish widget to any website. The swimming fish at the top of the page represent tasks from the BrainFish macOS productivity app.</p>
+
+            <p>Try moving your mouse near the fish - they'll swim away faster when you get close, just like in the desktop app!</p>
+
+            <h3>Current Tasks:</h3>
+            <ul>
+                <li>🚀 Launch new website</li>
+                <li>📝 Write blog post</li>
+                <li>☕ Take a coffee break</li>
+                <li>📱 Check social media</li>
+            </ul>
+        </div>
+
+        <div class="content">
+            <h2>Integration Code</h2>
+            <p>All it takes is these few lines of code:</p>
+            <pre style="background: #2d3748; color: #e2e8f0; padding: 20px; border-radius: 5px; overflow-x: auto;"><code>&lt;link rel="stylesheet" href="css/brainfish-widget.css"&gt;
+&lt;script src="js/brainfish-widget.js"&gt;&lt;/script&gt;
+
+&lt;script&gt;
+window.brainfishConfig = {
+    tasks: [
+        '🚀 Launch new website',
+        '📝 Write blog post',
+        '☕ Take a coffee break',
+        '📱 Check social media'
+    ],
+    theme: 'blue',
+    fontSize: 16,
+    speed: 50
+};
+&lt;/script&gt;</code></pre>
+        </div>
+    </div>
+
+    <!-- BrainFish Widget Integration -->
+    <script src="js/brainfish-widget.js"></script>
+    <script>
+    window.brainfishConfig = {
+        tasks: [
+            '🚀 Launch new website',
+            '📝 Write blog post',
+            '☕ Take a coffee break',
+            '📱 Check social media'
+        ],
+        theme: 'blue',
+        fontSize: 16,
+        speed: 50,
+        avoidMouse: true
+    };
+    </script>
+</body>
+</html>

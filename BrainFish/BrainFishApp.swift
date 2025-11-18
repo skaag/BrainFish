@@ -240,6 +240,7 @@ enum DrawerSide: String, Codable {
 enum ClipContent: Codable, Equatable {
     case text(String)
     case url(URL)
+    case image(Data)
 
     var previewText: String {
         switch self {
@@ -247,6 +248,9 @@ enum ClipContent: Codable, Equatable {
             return String(string.prefix(10))
         case .url(let url):
             return String(url.absoluteString.prefix(10))
+        case .image(let data):
+            let kb = data.count / 1024
+            return "Image \(kb)KB"
         }
     }
 
@@ -256,6 +260,22 @@ enum ClipContent: Codable, Equatable {
             return string
         case .url(let url):
             return url.absoluteString
+        case .image(let data):
+            let kb = data.count / 1024
+            if let nsImage = NSImage(data: data),
+               let pixelSize = nsImage.representations.first {
+                return "Image: \(Int(pixelSize.pixelsWide))×\(Int(pixelSize.pixelsHigh)) (\(kb) KB)"
+            }
+            return "Image (\(kb) KB)"
+        }
+    }
+
+    var image: NSImage? {
+        switch self {
+        case .image(let data):
+            return NSImage(data: data)
+        default:
+            return nil
         }
     }
 }
@@ -269,34 +289,65 @@ final class Task: Identifiable, ObservableObject {
     @Published var remainingTime: TimeInterval
     @Published var accelerationEndTime: Date? = nil // Added for sustained speed
 
-    init(title: String, startOffset: Double, speed: CGFloat, remainingTime: TimeInterval = 7200) {
+    // EventKit integration properties
+    @Published var notes: String?
+    @Published var dueDate: Date?
+    @Published var isCompleted: Bool = false
+    var reminderID: String?  // EKReminder.calendarItemIdentifier
+    var lastModified: Date
+    var reminderDeleted: Bool = false  // Track if reminder was deliberately deleted
+
+    init(title: String, startOffset: Double, speed: CGFloat, remainingTime: TimeInterval = 7200, notes: String? = nil, dueDate: Date? = nil, isCompleted: Bool = false, reminderID: String? = nil, reminderDeleted: Bool = false) {
         self.title = title
         self.startOffset = startOffset
         self.speed = speed
         self.remainingTime = remainingTime
+        self.notes = notes
+        self.dueDate = dueDate
+        self.isCompleted = isCompleted
+        self.reminderID = reminderID
+        self.lastModified = Date()
+        self.reminderDeleted = reminderDeleted
     }
 }
 
 extension Task: Codable {
     enum CodingKeys: String, CodingKey {
-        case title, startOffset, speed, remainingTime
+        case title, startOffset, speed, remainingTime, notes, dueDate, isCompleted, reminderID, lastModified, reminderDeleted
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(title, forKey: .title)
         try container.encode(startOffset, forKey: .startOffset)
         try container.encode(Double(speed), forKey: .speed)
         try container.encode(remainingTime, forKey: .remainingTime)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encodeIfPresent(dueDate, forKey: .dueDate)
+        try container.encode(isCompleted, forKey: .isCompleted)
+        try container.encodeIfPresent(reminderID, forKey: .reminderID)
+        try container.encode(lastModified, forKey: .lastModified)
+        try container.encode(reminderDeleted, forKey: .reminderDeleted)
     }
-    
+
     public convenience init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let title = try container.decode(String.self, forKey: .title)
         let startOffset = try container.decode(Double.self, forKey: .startOffset)
         let speedDouble = try container.decode(Double.self, forKey: .speed)
         let remainingTime = try container.decode(TimeInterval.self, forKey: .remainingTime)
-        self.init(title: title, startOffset: startOffset, speed: CGFloat(speedDouble), remainingTime: remainingTime)
+        let notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        let dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+        let isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+        let reminderID = try container.decodeIfPresent(String.self, forKey: .reminderID)
+        let reminderDeleted = try container.decodeIfPresent(Bool.self, forKey: .reminderDeleted) ?? false
+
+        self.init(title: title, startOffset: startOffset, speed: CGFloat(speedDouble), remainingTime: remainingTime, notes: notes, dueDate: dueDate, isCompleted: isCompleted, reminderID: reminderID, reminderDeleted: reminderDeleted)
+
+        // Restore lastModified if present, otherwise use current time
+        if let savedLastModified = try? container.decode(Date.self, forKey: .lastModified) {
+            self.lastModified = savedLastModified
+        }
     }
 }
 
@@ -429,6 +480,7 @@ class ClipDrawerManager: ObservableObject {
 }
 
 // MARK: - AppData
+@MainActor
 class AppData: ObservableObject {
     @Published var tasks: [Task] = [
         Task(title: "Buy groceries", startOffset: 0, speed: 50)
@@ -441,15 +493,42 @@ class AppData: ObservableObject {
     private let tasksKey = "SavedTasks"
     private var cancellables = Set<AnyCancellable>()
 
+    // EventKit integration
+    let reminderService: ReminderService
+    private(set) var syncEngine: SyncEngine!
+
     init() {
+        // Initialize EventKit services
+        self.reminderService = ReminderService()
+
         loadTasks()  // Attempt to load saved tasks
         startTimer()
+
         // Save tasks whenever the tasks array changes.
         $tasks
             .sink { [weak self] _ in
                 self?.saveTasks()
             }
             .store(in: &cancellables)
+
+        // Initialize sync engine on main actor (but don't request permission yet)
+        _Concurrency.Task { @MainActor in
+            self.syncEngine = SyncEngine(reminderService: self.reminderService, taskStore: self)
+        }
+    }
+
+    func enableRemindersSync() async -> Bool {
+        print("🔵 enableRemindersSync called - requesting authorization...")
+        let authorized = await reminderService.requestAuthorization()
+        print("🔵 Authorization result: \(authorized)")
+        if authorized {
+            print("✅ Reminders authorization granted")
+            await syncEngine.performInitialSync()
+            return true
+        } else {
+            print("⚠️ Reminders authorization denied")
+            return false
+        }
     }
 
     deinit {
@@ -546,6 +625,14 @@ class AppSettings: ObservableObject {
             UserDefaults.standard.set(defaultPomodoroTime, forKey: "defaultPomodoroTime")
         }
     }
+
+    // --- Reminders Sync Settings ---
+    @Published var remindersSyncEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(remindersSyncEnabled, forKey: "remindersSyncEnabled")
+        }
+    }
+
     // --- Sleep Cycle Settings ---
     @Published var sleepIntervalMinutes: Int = 1 {
         didSet { UserDefaults.standard.set(sleepIntervalMinutes, forKey: "sleepIntervalMinutes") }
@@ -694,6 +781,10 @@ class AppSettings: ObservableObject {
         }
         if let savedDefaultTime = UserDefaults.standard.object(forKey: "defaultPomodoroTime") as? TimeInterval {
             defaultPomodoroTime = savedDefaultTime
+        }
+        // --- Load Reminders Sync Setting ---
+        if let savedRemindersSyncEnabled = UserDefaults.standard.object(forKey: "remindersSyncEnabled") as? Bool {
+            remindersSyncEnabled = savedRemindersSyncEnabled
         }
         // --- Load Sleep Cycle Settings ---
         if let interval = UserDefaults.standard.object(forKey: "sleepIntervalMinutes") as? Int {
@@ -1872,25 +1963,43 @@ struct ClipBump: View {
         let cornerRadius = isDrawerVisible ? appSettings.clipBumpCornerRadiusVisible : appSettings.clipBumpCornerRadiusHidden
 
         ZStack(alignment: alignment) {
-            Text(clip.preview)
-                .font(.system(size: appSettings.clipFontSize, weight: .medium, design: .rounded))
-                .foregroundColor(appSettings.clipFontColor)
-                .padding(.horizontal, appSettings.clipPaddingHorizontal)
-                .padding(.vertical, appSettings.clipPaddingVertical)
-                .padding(alignment == .trailing ? .trailing : .leading, iconSpacing) // Make space for icon
-                .frame(minHeight: appSettings.clipBumpMinHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(appSettings.clipBackgroundColor)
-                )
-
-            // App icon overlay (before rotation) - only if setting is enabled
-            if showAppIcon, let appIcon = loadAppIcon() {
-                Image(nsImage: appIcon)
+            // Display image thumbnail or text based on content type
+            if let image = clip.content.image {
+                // Image clip - show thumbnail with counter-rotation to maintain original orientation
+                Image(nsImage: image)
+                    .renderingMode(.original) // Preserve transparency and original rendering
                     .resizable()
-                    .frame(width: appSettings.clipAppIconSize, height: appSettings.clipAppIconSize)
-                    .cornerRadius(2)
-                    .padding(2) // Small padding from edge
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: appSettings.clipBumpMinHeight * 1.5, height: appSettings.clipBumpMinHeight)
+                    .clipped()
+                    .cornerRadius(cornerRadius)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .stroke(appSettings.clipFontColor.opacity(0.3), lineWidth: 1)
+                    )
+                    .rotationEffect(.degrees(-rotation)) // Counter-rotate to keep image upright
+            } else {
+                // Text clip - show text
+                Text(clip.preview)
+                    .font(.system(size: appSettings.clipFontSize, weight: .medium, design: .rounded))
+                    .foregroundColor(appSettings.clipFontColor)
+                    .padding(.horizontal, appSettings.clipPaddingHorizontal)
+                    .padding(.vertical, appSettings.clipPaddingVertical)
+                    .padding(alignment == .trailing ? .trailing : .leading, iconSpacing) // Make space for icon
+                    .frame(minHeight: appSettings.clipBumpMinHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: cornerRadius)
+                            .fill(appSettings.clipBackgroundColor)
+                    )
+
+                // App icon overlay (before rotation) - only if setting is enabled
+                if showAppIcon, let appIcon = loadAppIcon() {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .frame(width: appSettings.clipAppIconSize, height: appSettings.clipAppIconSize)
+                        .cornerRadius(2)
+                        .padding(2) // Small padding from edge
+                }
             }
         }
         .rotationEffect(.degrees(rotation))
@@ -1906,15 +2015,32 @@ struct ClipBump: View {
             // Set drag state flag
             manager.isDraggingClip = true
 
+            // Safety timer: reset flag after 10 seconds if drag doesn't complete
+            // (handles cases where drag is cancelled or dropped outside app)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+                if manager.isDraggingClip {
+                    NSLog("⚠️ Drag timeout - resetting isDraggingClip flag")
+                    manager.isDraggingClip = false
+                }
+            }
+
             // Return the draggable content with custom preview
             NSLog("🎯 Starting drag for clip: %@", clip.preview)
 
-            // Create drag preview: first word + "..."
-            let words = clip.preview.components(separatedBy: .whitespaces)
-            let previewText = words.isEmpty ? "..." : "\(words[0])..."
+            let provider: NSItemProvider
 
-            let provider = NSItemProvider(object: clip.content.fullText as NSString)
-            provider.suggestedName = previewText
+            // Create appropriate provider based on content type
+            if let image = clip.content.image {
+                // Image content - provide NSImage
+                provider = NSItemProvider(object: image)
+                provider.suggestedName = "image.png"
+            } else {
+                // Text content - provide NSString
+                let words = clip.preview.components(separatedBy: .whitespaces)
+                let previewText = words.isEmpty ? "..." : "\(words[0])..."
+                provider = NSItemProvider(object: clip.content.fullText as NSString)
+                provider.suggestedName = previewText
+            }
 
             return provider
         }
@@ -1952,14 +2078,25 @@ struct ClipBump: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.secondary)
 
-                        Text(clip.content.fullText)
-                            .font(.system(size: 11))
-                            .foregroundColor(.primary)
-                            .lineLimit(10)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // Show image or text based on content type
+                        if let image = clip.content.image {
+                            Image(nsImage: image)
+                                .renderingMode(.original) // Preserve transparency and original rendering
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxWidth: 800, maxHeight: 600)
+                                .cornerRadius(4)
+                        } else {
+                            Text(clip.content.fullText)
+                                .font(.system(size: 12))
+                                .foregroundColor(.primary)
+                                .lineLimit(nil)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    .padding(8)
-                    .frame(maxWidth: 750)
+                    .padding(12)
+                    .frame(width: 800)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
                             .fill(Color(nsColor: .windowBackgroundColor))
@@ -1997,11 +2134,60 @@ struct DeleteZoneView: View {
                 )
                 .padding(.horizontal, 20)
         }
-        .onDrop(of: [.text, .plainText], isTargeted: $isTargeted) { providers, location in
+        .onDrop(of: [.text, .plainText, .html, .rtf, .image, .png, .jpeg, .tiff], isTargeted: $isTargeted) { providers, location in
             print("🗑️ DELETE ZONE: Drop received at location \(location)")
 
-            // Extract the dropped text to identify which clip
+            // Extract the dropped content to identify which clip
             for provider in providers {
+                // Try image types first
+                let imageTypes = ["public.png", "public.jpeg", "public.tiff", "public.image"]
+                for typeId in imageTypes {
+                    if provider.hasItemConformingToTypeIdentifier(typeId) {
+                        provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
+                            if let error = error {
+                                print("❌ Error loading dropped image: \(error)")
+                                return
+                            }
+
+                            var imageData: Data?
+                            if let data = item as? Data {
+                                imageData = data
+                            } else if let url = item as? URL {
+                                imageData = try? Data(contentsOf: url)
+                            }
+
+                            if let imageData = imageData {
+                                DispatchQueue.main.async {
+                                    // Reset drag state
+                                    self.clipDrawerManager.isDraggingClip = false
+
+                                    // Find and delete the clip with matching image data
+                                    if let clipToDelete = self.clipDrawerManager.clips.first(where: {
+                                        if case .image(let data) = $0.content {
+                                            return data == imageData
+                                        }
+                                        return false
+                                    }) {
+                                        print("🗑️ Deleting image clip in delete zone")
+
+                                        // Play poof sound
+                                        let poofPath = "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/dock/poof.aif"
+                                        if let poofSound = NSSound(contentsOfFile: poofPath, byReference: true) {
+                                            poofSound.play()
+                                        } else if let funkSound = NSSound(named: "Funk") {
+                                            funkSound.play()
+                                        }
+
+                                        self.clipDrawerManager.removeClip(clipToDelete)
+                                    }
+                                }
+                            }
+                        }
+                        break
+                    }
+                }
+
+                // Try text types if no image found
                 let textTypes = ["public.utf8-plain-text", "public.plain-text", "public.text"]
                 for typeId in textTypes {
                     if provider.hasItemConformingToTypeIdentifier(typeId) {
@@ -2197,7 +2383,7 @@ struct ClipDrawer: View {
                 )
                 .frame(width: drawerWidth, height: usableHeight)
                 .offset(y: topMargin)
-                .onDrop(of: [.text, .plainText], isTargeted: $isTargeted) { providers, location in
+                .onDrop(of: [.text, .plainText, .html, .rtf, .image, .png, .jpeg, .tiff], isTargeted: $isTargeted) { providers, location in
                     handleDropOnDrawer(providers: providers, location: location, topMargin: topMargin, usableHeight: usableHeight)
                     return true
                 }
@@ -2302,7 +2488,178 @@ struct ClipDrawer: View {
 
     private func handleDropOnDrawer(providers: [NSItemProvider], location: CGPoint, topMargin: CGFloat, usableHeight: CGFloat) {
         for provider in providers {
-            // Try multiple text type identifiers
+            // Try image types first (they're more specific)
+            let imageTypes = ["public.png", "public.jpeg", "public.tiff", "public.image"]
+            for typeId in imageTypes {
+                if provider.hasItemConformingToTypeIdentifier(typeId) {
+                    provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
+                        if let error = error {
+                            print("❌ Error loading dropped image: \(error)")
+                            return
+                        }
+
+                        var imageData: Data?
+                        if let data = item as? Data {
+                            imageData = data
+                        } else if let url = item as? URL {
+                            imageData = try? Data(contentsOf: url)
+                        }
+
+                        if let imageData = imageData {
+                            // Calculate drop zone based on Y position
+                            let dropY = location.y - topMargin
+                            let zoneHeight = usableHeight / 32
+                            let dropZone = max(0, min(31, Int(dropY / zoneHeight)))
+
+                            // Get frontmost app info - but NOT if dragging from BrainFish itself
+                            let frontmostApp = NSWorkspace.shared.frontmostApplication
+                            let isBrainFish = frontmostApp?.bundleIdentifier == Bundle.main.bundleIdentifier
+                            let appBundleID = isBrainFish ? nil : frontmostApp?.bundleIdentifier
+                            let appName = isBrainFish ? nil : frontmostApp?.localizedName
+
+                            print("✅ Drop on drawer: zone=\(dropZone), image=\(imageData.count) bytes, fromBrainFish=\(isBrainFish)")
+
+                            DispatchQueue.main.async {
+                                // Reset drag state when dropping on drawer
+                                self.manager.isDraggingClip = false
+
+                                let clip = Clip(
+                                    content: .image(imageData),
+                                    side: self.side,
+                                    dropZone: dropZone,
+                                    sourceAppBundleID: appBundleID,
+                                    sourceAppName: appName
+                                )
+                                self.manager.addClip(clip)
+                            }
+                            return
+                        }
+                    }
+                    break
+                }
+            }
+
+            // Try HTML types (from Apple Notes when dragging a note object)
+            let htmlTypes = ["public.html", "com.apple.notes.html"]
+            for typeId in htmlTypes {
+                if provider.hasItemConformingToTypeIdentifier(typeId) {
+                    provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
+                        if let error = error {
+                            print("❌ Error loading dropped HTML: \(error)")
+                            return
+                        }
+
+                        var text: String?
+                        if let data = item as? Data {
+                            // Convert HTML to plain text
+                            let attributedString = try? NSAttributedString(
+                                data: data,
+                                options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
+                                documentAttributes: nil
+                            )
+                            text = attributedString?.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                        } else if let string = item as? String {
+                            // If HTML came as string, try to parse it
+                            if let htmlData = string.data(using: .utf8) {
+                                let attributedString = try? NSAttributedString(
+                                    data: htmlData,
+                                    options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
+                                    documentAttributes: nil
+                                )
+                                text = attributedString?.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        }
+
+                        if let text = text, !text.isEmpty {
+                            // Calculate drop zone based on Y position
+                            let dropY = location.y - topMargin
+                            let zoneHeight = usableHeight / 32
+                            let dropZone = max(0, min(31, Int(dropY / zoneHeight)))
+
+                            // Get frontmost app info - but NOT if dragging from BrainFish itself
+                            let frontmostApp = NSWorkspace.shared.frontmostApplication
+                            let isBrainFish = frontmostApp?.bundleIdentifier == Bundle.main.bundleIdentifier
+                            let appBundleID = isBrainFish ? nil : frontmostApp?.bundleIdentifier
+                            let appName = isBrainFish ? nil : frontmostApp?.localizedName
+
+                            print("✅ Drop on drawer (HTML/Note): zone=\(dropZone), text=\(text.prefix(30)), fromBrainFish=\(isBrainFish)")
+
+                            DispatchQueue.main.async {
+                                // Reset drag state when dropping on drawer
+                                self.manager.isDraggingClip = false
+
+                                let clip = Clip(
+                                    content: .text(text),
+                                    side: self.side,
+                                    dropZone: dropZone,
+                                    sourceAppBundleID: appBundleID,
+                                    sourceAppName: appName
+                                )
+                                self.manager.addClip(clip)
+                            }
+                            return
+                        }
+                    }
+                    break
+                }
+            }
+
+            // Try RTF types (from TextEdit, etc.)
+            let rtfTypes = ["public.rtf", "com.apple.rtf"]
+            for typeId in rtfTypes {
+                if provider.hasItemConformingToTypeIdentifier(typeId) {
+                    provider.loadItem(forTypeIdentifier: typeId, options: nil) { item, error in
+                        if let error = error {
+                            print("❌ Error loading dropped RTF: \(error)")
+                            return
+                        }
+
+                        var text: String?
+                        if let data = item as? Data {
+                            // Convert RTF to plain text
+                            let attributedString = try? NSAttributedString(
+                                data: data,
+                                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                                documentAttributes: nil
+                            )
+                            text = attributedString?.string
+                        }
+
+                        if let text = text {
+                            // Calculate drop zone based on Y position
+                            let dropY = location.y - topMargin
+                            let zoneHeight = usableHeight / 32
+                            let dropZone = max(0, min(31, Int(dropY / zoneHeight)))
+
+                            // Get frontmost app info - but NOT if dragging from BrainFish itself
+                            let frontmostApp = NSWorkspace.shared.frontmostApplication
+                            let isBrainFish = frontmostApp?.bundleIdentifier == Bundle.main.bundleIdentifier
+                            let appBundleID = isBrainFish ? nil : frontmostApp?.bundleIdentifier
+                            let appName = isBrainFish ? nil : frontmostApp?.localizedName
+
+                            print("✅ Drop on drawer (RTF): zone=\(dropZone), text=\(text.prefix(30)), fromBrainFish=\(isBrainFish)")
+
+                            DispatchQueue.main.async {
+                                // Reset drag state when dropping on drawer
+                                self.manager.isDraggingClip = false
+
+                                let clip = Clip(
+                                    content: .text(text),
+                                    side: self.side,
+                                    dropZone: dropZone,
+                                    sourceAppBundleID: appBundleID,
+                                    sourceAppName: appName
+                                )
+                                self.manager.addClip(clip)
+                            }
+                            return
+                        }
+                    }
+                    break
+                }
+            }
+
+            // Try text types if no RTF or image was found
             let textTypes = ["public.utf8-plain-text", "public.plain-text", "public.text"]
             for typeId in textTypes {
                 if provider.hasItemConformingToTypeIdentifier(typeId) {
@@ -2334,6 +2691,9 @@ struct ClipDrawer: View {
                             print("✅ Drop on drawer: zone=\(dropZone), text=\(text.prefix(30)), fromBrainFish=\(isBrainFish)")
 
                             DispatchQueue.main.async {
+                                // Reset drag state when dropping on drawer
+                                self.manager.isDraggingClip = false
+
                                 let clip = Clip(
                                     content: .text(text),
                                     side: self.side,
@@ -2370,6 +2730,7 @@ struct ClipDrawer: View {
 
 // MARK: - SettingsView
 struct SettingsView: View {
+    @EnvironmentObject var appData: AppData
     @EnvironmentObject var appSettings: AppSettings
     @Environment(\.presentationMode) var presentationMode
     @State private var selectedTab: Int = 0
@@ -2464,6 +2825,22 @@ struct SettingsView: View {
                             value: $appSettings.sleepDurationMinutes, in: 1...60)
                         .onChange(of: appSettings.sleepDurationMinutes) { _, _ in
                             if appSettings.sleepDurationMinutes < 1 { appSettings.sleepDurationMinutes = 1 }
+                        }
+
+                    // --- Reminders Sync ---
+                    Toggle("Sync with Apple Reminders", isOn: $appSettings.remindersSyncEnabled)
+                        .onChange(of: appSettings.remindersSyncEnabled) { _, enabled in
+                            if enabled {
+                                _Concurrency.Task {
+                                    let authorized = await appData.enableRemindersSync()
+                                    if !authorized {
+                                        // Permission denied, turn the toggle back off
+                                        await MainActor.run {
+                                            appSettings.remindersSyncEnabled = false
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                     Toggle("Launch at Login", isOn: $appSettings.launchAtLogin)

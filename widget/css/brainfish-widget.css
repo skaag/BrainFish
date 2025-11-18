@@ -1,0 +1,128 @@
+/* BrainFish Widget CSS */
+.brainfish-widget {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100px;
+    z-index: 9999;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.fish {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-weight: bold;
+    font-size: 16px;
+    color: #333;
+    pointer-events: none;
+    will-change: transform;
+    width: 100%;
+    height: 100%;
+}
+
+.fish-part {
+    position: absolute;
+    background-image: url('../assets/fish-sprite.png');
+    background-repeat: no-repeat;
+    display: block;
+    background-size: 641px 377px;
+}
+
+/* Sprite positions - head, pectoral fins, ventral fins, tail */
+/* Scale down to 30% of original size for web display */
+.fish-head {
+    width: 52px;  /* 174px * 0.3 */
+    height: 75px; /* 250px * 0.3 */
+    background-position: 0 0;
+    background-size: 192px 113px; /* 641px * 0.3, 377px * 0.3 */
+    transform-origin: right center;
+}
+
+.fish-fins-pectoral {
+    width: 43px;  /* 143px * 0.3 */
+    height: 113px; /* 377px * 0.3 */
+    background-position: -52px 0;
+    background-size: 192px 113px;
+    transform-origin: center center;
+}
+
+.fish-fins-ventral {
+    width: 30px;  /* 99px * 0.3 */
+    height: 70px; /* 235px * 0.3 */
+    background-position: -95px 0;
+    background-size: 192px 113px;
+    transform-origin: center center;
+}
+
+.fish-tail {
+    width: 67px;  /* 225px * 0.3 */
+    height: 62px; /* 208px * 0.3 */
+    background-position: -125px 0;
+    background-size: 192px 113px;
+    transform-origin: left center;
+}
+
+.fish-letter {
+    position: absolute;
+    display: inline-block;
+    text-shadow:
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000;
+    white-space: nowrap;
+}
+
+/* Default color themes */
+.brainfish-widget[data-theme="blue"] .fish-letter {
+    color: #007AFF;
+}
+
+.brainfish-widget[data-theme="green"] .fish-letter {
+    color: #34C759;
+}
+
+.brainfish-widget[data-theme="orange"] .fish-letter {
+    color: #FF9500;
+}
+
+.brainfish-widget[data-theme="red"] .fish-letter {
+    color: #FF3B30;
+}
+
+.brainfish-widget[data-theme="purple"] .fish-letter {
+    color: #AF52DE;
+}
+
+/* Animation classes */
+.fish-swimming {
+    animation: swim-horizontal linear infinite;
+}
+
+@keyframes swim-horizontal {
+    from {
+        transform: translateX(100vw);
+    }
+    to {
+        transform: translateX(-300px);
+    }
+}
+
+/* Responsive sizing */
+@media (max-width: 768px) {
+    .brainfish-widget {
+        height: 40px;
+    }
+
+    .fish {
+        font-size: 12px;
+    }
+
+    .fish-part {
+        transform: scale(0.6);
+    }
+}

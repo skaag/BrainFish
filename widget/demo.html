@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrainFish Widget Demo</title>
+    <link rel="stylesheet" href="css/brainfish-widget.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 80px 20px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 3em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            text-align: center;
+            font-size: 1.2em;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+
+        .demo-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 30px;
+            margin: 30px 0;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .demo-section h2 {
+            margin-top: 0;
+            color: #fff;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+            padding-bottom: 10px;
+        }
+
+        .control-group {
+            margin: 20px 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-family: inherit;
+        }
+
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+
+        button:hover {
+            background: #0056CC;
+        }
+
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            overflow-x: auto;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .feature-list li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+
+        .feature-list li:before {
+            content: '🐟';
+            position: absolute;
+            left: 0;
+            top: 8px;
+        }
+
+        .download-section {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 15px;
+            margin-top: 40px;
+        }
+
+        .download-section h2 {
+            margin-bottom: 20px;
+        }
+
+        .download-section p {
+            font-size: 1.1em;
+            margin-bottom: 30px;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐟 BrainFish</h1>
+        <p class="subtitle">Let your tasks swim by, so you never forget your goals</p>
+
+        <div class="demo-section">
+            <h2>Live Demo</h2>
+            <p>Watch your tasks swim across the top of this page! The fish avoid your mouse cursor just like in the macOS app.</p>
+
+            <div class="control-group">
+                <label for="tasks">Tasks (one per line):</label>
+                <textarea id="tasks" placeholder="Finish project proposal&#10;Review team feedback&#10;Schedule client meeting&#10;Update documentation">Finish project proposal
+Review team feedback
+Schedule client meeting
+Update documentation</textarea>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label for="theme">Theme Color:</label>
+                    <select id="theme">
+                        <option value="blue">Blue</option>
+                        <option value="green">Green</option>
+                        <option value="orange">Orange</option>
+                        <option value="red">Red</option>
+                        <option value="purple">Purple</option>
+                    </select>
+                </div>
+
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label for="fontSize">Font Size:</label>
+                    <select id="fontSize">
+                        <option value="12">Small (12px)</option>
+                        <option value="16" selected>Medium (16px)</option>
+                        <option value="20">Large (20px)</option>
+                        <option value="24">Extra Large (24px)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button onclick="updateWidget()">Update Fish</button>
+            <button onclick="stopWidget()">Stop</button>
+            <button onclick="startWidget()">Start</button>
+        </div>
+
+        <div class="demo-section">
+            <h2>Features</h2>
+            <ul class="feature-list">
+                <li>Swimming fish animation that mimics the macOS app</li>
+                <li>Mouse avoidance behavior - fish swim faster when you get close</li>
+                <li>Wave-based swimming paths for natural movement</li>
+                <li>Customizable tasks, colors, and font sizes</li>
+                <li>Responsive design that works on mobile and desktop</li>
+                <li>Easy integration with just a few lines of code</li>
+                <li>Lightweight sprite-based graphics for fast loading</li>
+            </ul>
+        </div>
+
+        <div class="demo-section">
+            <h2>Easy Integration</h2>
+            <p>Add the BrainFish widget to any website with just a few lines of code:</p>
+
+            <div class="code-block">
+&lt;!-- Include the CSS and JS files --&gt;
+&lt;link rel="stylesheet" href="css/brainfish-widget.css"&gt;
+&lt;script src="js/brainfish-widget.js"&gt;&lt;/script&gt;
+
+&lt;!-- Configure your tasks --&gt;
+&lt;script&gt;
+window.brainfishConfig = {
+    tasks: [
+        'Finish project proposal',
+        'Review team feedback',
+        'Schedule client meeting',
+        'Update documentation'
+    ],
+    theme: 'blue',        // blue, green, orange, red, purple
+    fontSize: 16,         // Font size in pixels
+    speed: 50,            // Swimming speed (pixels/second)
+    avoidMouse: true      // Enable mouse avoidance
+};
+&lt;/script&gt;</div>
+
+            <p>Or initialize it programmatically:</p>
+
+            <div class="code-block">
+const widget = new BrainFishWidget({
+    tasks: ['Task 1', 'Task 2', 'Task 3'],
+    theme: 'green',
+    fontSize: 18,
+    speed: 75
+});
+
+// Update tasks dynamically
+widget.updateTasks(['New Task', 'Another Task']);
+
+// Clean up when done
+widget.destroy();</div>
+        </div>
+
+        <div class="download-section">
+            <h2>Download BrainFish for macOS</h2>
+            <p>Experience the full desktop application with task management, Pomodoro timers, and more!</p>
+            <button style="font-size: 18px; padding: 15px 30px;">
+                Download for macOS
+            </button>
+        </div>
+    </div>
+
+    <script src="js/brainfish-widget.js"></script>
+    <script>
+        // Initialize widget with default tasks
+        let widget = null;
+
+        function startWidget() {
+            if (widget) {
+                widget.destroy();
+            }
+
+            const tasks = document.getElementById('tasks').value
+                .split('\n')
+                .filter(task => task.trim())
+                .map(task => task.trim());
+
+            const theme = document.getElementById('theme').value;
+            const fontSize = parseInt(document.getElementById('fontSize').value);
+
+            widget = new BrainFishWidget({
+                tasks: tasks,
+                theme: theme,
+                fontSize: fontSize,
+                speed: 50,
+                avoidMouse: true
+            });
+        }
+
+        function updateWidget() {
+            startWidget();
+        }
+
+        function stopWidget() {
+            if (widget) {
+                widget.destroy();
+                widget = null;
+            }
+        }
+
+        // Auto-start widget when page loads
+        document.addEventListener('DOMContentLoaded', startWidget);
+    </script>
+</body>
+</html>

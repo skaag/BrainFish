@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrainFish - Rotation Debug</title>
+    <link rel="stylesheet" href="css/brainfish-widget-v2.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0;
+            padding: 100px 20px 20px;
+            background: #000;
+            color: white;
+        }
+
+        .debug-info {
+            position: fixed;
+            top: 100px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.9);
+            color: black;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            z-index: 10001;
+            font-family: monospace;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2em;
+        }
+
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐟 Rotation Debug Test</h1>
+        <p>Watch the fish rotation as they swim along the wave path!</p>
+
+        <button onclick="increaseWave()">More Wave</button>
+        <button onclick="decreaseWave()">Less Wave</button>
+        <button onclick="fasterSpeed()">Faster</button>
+        <button onclick="slowerSpeed()">Slower</button>
+        <button onclick="resetWidget()">Reset</button>
+    </div>
+
+    <div class="debug-info" id="debug">
+        Rotation Angle: <span id="angle">0°</span><br>
+        Wave Amplitude: <span id="wave">20px</span><br>
+        Speed: <span id="speed">120px/s</span>
+    </div>
+
+    <script src="js/brainfish-widget-v2.js"></script>
+    <script>
+        let currentSettings = {
+            tasks: ['Test Fish Rotation'],
+            theme: 'blue',
+            fontSize: 18,
+            speed: 120,
+            waveAmplitude: 20,
+            waveFrequency: 9, // Updated to match new default
+            avoidMouse: true
+        };
+
+        let widget = new BrainFishWidget(currentSettings);
+
+        // Add debug monitoring
+        function updateDebugInfo() {
+            if (widget.fishList && widget.fishList[0]) {
+                const fish = widget.fishList[0];
+                const angle = widget.calculateTangentAngle(fish.x, fish.index);
+                document.getElementById('angle').textContent = `${angle.toFixed(1)}°`;
+                document.getElementById('wave').textContent = `${currentSettings.waveAmplitude}px`;
+                document.getElementById('speed').textContent = `${currentSettings.speed}px/s`;
+            }
+            requestAnimationFrame(updateDebugInfo);
+        }
+        updateDebugInfo();
+
+        function recreateWidget() {
+            if (widget) widget.destroy();
+            widget = new BrainFishWidget(currentSettings);
+        }
+
+        function increaseWave() {
+            currentSettings.waveAmplitude = Math.min(currentSettings.waveAmplitude + 5, 50);
+            recreateWidget();
+        }
+
+        function decreaseWave() {
+            currentSettings.waveAmplitude = Math.max(currentSettings.waveAmplitude - 5, 5);
+            recreateWidget();
+        }
+
+        function fasterSpeed() {
+            currentSettings.speed = Math.min(currentSettings.speed + 30, 300);
+            recreateWidget();
+        }
+
+        function slowerSpeed() {
+            currentSettings.speed = Math.max(currentSettings.speed - 30, 30);
+            recreateWidget();
+        }
+
+        function resetWidget() {
+            currentSettings.waveAmplitude = 20;
+            currentSettings.speed = 120;
+            recreateWidget();
+        }
+    </script>
+</body>
+</html>

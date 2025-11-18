@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BrainFish Widget - Simple Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 80px 20px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 3em;
+            margin-bottom: 20px;
+        }
+
+        .info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 15px;
+            margin: 30px 0;
+        }
+
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px;
+        }
+
+        button:hover {
+            background: #0056CC;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐟 BrainFish Widget Test</h1>
+
+        <div class="info">
+            <h2>Simple Animation Test</h2>
+            <p>Fish with emoji icons should be swimming across the top of this page.</p>
+            <p>Move your mouse near them and watch them speed up!</p>
+
+            <button onclick="addTask()">Add Task</button>
+            <button onclick="clearTasks()">Clear Tasks</button>
+            <button onclick="changeTheme()">Change Theme</button>
+        </div>
+    </div>
+
+    <script src="js/brainfish-widget-simple.js"></script>
+    <script>
+        // Initialize with test tasks
+        window.brainfishConfig = {
+            tasks: [
+                'Finish project proposal',
+                'Review team feedback',
+                'Schedule client meeting',
+                'Update documentation'
+            ],
+            theme: 'blue',
+            fontSize: 18,
+            speed: 60,
+            avoidMouse: true
+        };
+
+        // Initialize widget
+        let widget = new BrainFishWidget(window.brainfishConfig);
+
+        // Test functions
+        let taskCount = 4;
+        function addTask() {
+            taskCount++;
+            const newTasks = widget.tasks.concat([`New Task ${taskCount}`]);
+            widget.updateTasks(newTasks);
+        }
+
+        function clearTasks() {
+            widget.updateTasks(['Empty ocean...']);
+            taskCount = 0;
+        }
+
+        const themes = ['blue', 'green', 'orange', 'red', 'purple'];
+        let currentTheme = 0;
+        function changeTheme() {
+            currentTheme = (currentTheme + 1) % themes.length;
+            widget.destroy();
+            window.brainfishConfig.theme = themes[currentTheme];
+            widget = new BrainFishWidget(window.brainfishConfig);
+        }
+    </script>
+</body>
+</html>

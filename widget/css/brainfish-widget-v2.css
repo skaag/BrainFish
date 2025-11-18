@@ -1,0 +1,93 @@
+/* BrainFish Widget CSS v2 - Complete rewrite */
+
+.brainfish-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 250px; /* Increased to accommodate priority spread */
+    z-index: 10000;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.brainfish {
+    position: absolute;
+    width: 500px; /* Wide enough for fish + text */
+    height: 100px;
+    pointer-events: none;
+    transform-origin: 50px 50px; /* Set rotation origin */
+}
+
+.fish-part {
+    position: absolute;
+    background-image: url('../assets/fish-sprite.png');
+    background-repeat: no-repeat;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+}
+
+/* Original sprite positions in the 641x377 sprite sheet */
+/* Head: 0-174px, Pectoral: 174-317px, Ventral: 317-416px, Tail: 416-641px */
+/* Adjusted to prevent white line artifacts */
+
+.fish-head {
+    width: 33px;  /* scaled down with 2px safety margin */
+    height: 48px;
+    background-size: 128px 75px; /* Scale entire sprite to 20% */
+    background-position: 0 0;
+    background-clip: content-box;
+    padding: 1px;
+}
+
+.fish-pectoral {
+    width: 27px;  /* 2px less to avoid artifacts */
+    height: 73px;
+    background-size: 128px 75px;
+    background-position: -35px 0;
+    background-clip: content-box;
+    padding: 1px;
+}
+
+.fish-ventral {
+    width: 18px;  /* 2px less to avoid artifacts */
+    height: 45px;
+    background-size: 128px 75px;
+    background-position: -64px 0;
+    background-clip: content-box;
+    padding: 1px;
+}
+
+.fish-tail {
+    width: 43px;  /* 2px less to avoid artifacts */
+    height: 40px;
+    background-size: 128px 75px;
+    background-position: -84px 0;
+    background-clip: content-box;
+    padding: 1px;
+}
+
+.fish-letter {
+    position: absolute;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-weight: bold;
+    color: #007AFF;
+    text-shadow:
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000;
+    user-select: none;
+    pointer-events: none;
+}
+
+/* Theme colors - default to red */
+.fish-letter {
+    color: #FF3B30; /* Default red color */
+}
+
+.brainfish[data-theme="blue"] .fish-letter { color: #007AFF; }
+.brainfish[data-theme="green"] .fish-letter { color: #34C759; }
+.brainfish[data-theme="orange"] .fish-letter { color: #FF9500; }
+.brainfish[data-theme="red"] .fish-letter { color: #FF3B30; }
+.brainfish[data-theme="purple"] .fish-letter { color: #AF52DE; }
