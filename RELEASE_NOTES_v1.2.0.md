@@ -105,4 +105,4 @@ Developed with assistance from Claude Code (Anthropic)
 
 ---
 
-**Full Changelog**: https://github.com/YOUR_USERNAME/BrainFish/compare/v1.1.0...v1.2.0
+**Full Changelog**: https://github.com/skaag/BrainFish/compare/v1.1.0...v1.2.0
